@@ -1,4 +1,6 @@
 data
+output
+
 *.vscode
 **/local_*/
 local_*
