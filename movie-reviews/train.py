@@ -60,16 +60,20 @@ class Batch:
             self.targets.to(device)
         )
 
+    def __len__(self) -> int:
+        return len(self.targets)
+
 class ScorePredictor(nn.Module):
 
-    def __init__(self, pretrained_model: nn.Module, bert_config: AutoConfig):
+    def __init__(self, pretrained_model: nn.Module, bert_config: AutoConfig, max_input_size: int):
         super().__init__()
         self.pretrained_model = pretrained_model
-        self.regressor = nn.Linear(bert_config.hidden_size, 1)
+        self.regressor = nn.Linear(bert_config.hidden_size*max_input_size, 1)
 
     def forward(self, batch: Batch) -> torch.FloatTensor:
-        cwrs = self.pretrained_model(batch.ids, return_dict=True)
-        return self.regressor(cwrs["last_hidden_state"])
+        cwrs = self.pretrained_model(batch.ids, return_dict=True)["last_hidden_state"]
+        cwrs = cwrs.view(len(batch), -1).contiguous()
+        return self.regressor(cwrs).squeeze()
 
 def fix_score(review: Review) -> float:
     if "/" in review.score:
@@ -112,9 +116,9 @@ def run(model_name: str, batch_size: int, epochs: int, lr: float, max_examples: 
     log.section("Building tokenizer and model")
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     bert_config = AutoConfig.from_pretrained(model_name)
-    model = RobertaModel.from_pretrained(model_name)
-    model = ScorePredictor(model, bert_config).to(device)
     tokenizer = AutoTokenizer.from_pretrained(model_name)
+    model = RobertaModel.from_pretrained(model_name)
+    model = ScorePredictor(model, bert_config, tokenizer.model_max_length).to(device)
 
     log.section("Building examples")
     train_examples = [ex for review in tqdm(train_reviews) if (ex := Example.from_review(tokenizer, review)).target != -1]
