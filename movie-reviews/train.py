@@ -83,7 +83,7 @@ class ScorePredictor(nn.Module):
 
 def parse_score(review: Review) -> float:
     """ Parses a review score. Returns -1 if unparsable """
-    if "/" in review.score:
+    if review.score.endswith("/5"):
         nom, denom = review.score.split("/")
         if denom not in ("0", "00"):
             score = float(nom) / float(denom)
@@ -184,7 +184,7 @@ def run(location: str, model_name: str, batch_size: int, epochs: int, lr: float,
     scheduler = get_linear_schedule_with_warmup(optimizer, int(0.06*num_updates), num_updates)
     criterion = nn.L1Loss()
 
-    log.section("Training for %i epochs for a total of %i updates" % (epochs, num_train_batches))
+    log.section("Training for %i epochs for a total of %i updates" % (epochs, num_updates))
     res = Results(
         epochs = epochs,
         num_batches = num_train_batches,
