@@ -14,9 +14,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-OUTPUT = "output"
-os.makedirs(OUTPUT, exist_ok=True)
-
 
 update_rc_params(rc_params_small)
 
@@ -39,7 +36,7 @@ class Example:
         id_arr[1+len(ids)] = tokenizer.sep_token_id
         return Example(
             id_arr,
-            fix_score(review),
+            parse_score(review),
         )
 
 @dataclass
@@ -63,6 +60,15 @@ class Batch:
     def __len__(self) -> int:
         return len(self.targets)
 
+@dataclass
+class Results(DataStorage):
+    epochs: int
+    num_batches: int
+
+    train_losses: np.ndarray
+    test_losses: np.ndarray
+    accuracies: np.ndarray
+
 class ScorePredictor(nn.Module):
 
     def __init__(self, pretrained_model: nn.Module, bert_config: AutoConfig, max_input_size: int):
@@ -75,16 +81,24 @@ class ScorePredictor(nn.Module):
         cwrs = cwrs.view(len(batch), -1).contiguous()
         return self.regressor(cwrs).squeeze()
 
-def fix_score(review: Review) -> float:
+def parse_score(review: Review) -> float:
+    """ Parses a review score. Returns -1 if unparsable """
     if "/" in review.score:
         nom, denom = review.score.split("/")
-        if "0" not in (nom, denom) and "00" not in (nom, denom):
+        if denom not in ("0", "00"):
             score = float(nom) / float(denom)
-            if 0 < score <= 5:
+            if 0 <= score <= 5:
                 return score
     return -1
 
-def load_data(max_examples: int, test_train_split=0.1) -> tuple[list[Review], list[Review]]:
+def coerce_score(preds: torch.FloatTensor) -> torch.FloatTensor:
+    """ Converts predictions in [0, 1] to the used interval [0.5, 5] inplace """
+    preds *= 5
+    preds[preds<0.5] = 0.5
+    preds[preds>5] = 5
+    return preds
+
+def load_data(max_examples: int, test_train_split=0.01) -> tuple[list[Review], list[Review]]:
     reviews = list()
     with open("data/rotten_tomatoes_critic_reviews.csv") as f:
         r = csv.reader(f, delimiter=",", quotechar="\"", quoting=csv.QUOTE_MINIMAL)
@@ -97,18 +111,42 @@ def load_data(max_examples: int, test_train_split=0.1) -> tuple[list[Review], li
     n_train = int((1-test_train_split) * len(reviews))
     return reviews[:n_train], reviews[n_train:]
 
-def savefig(name: str):
-    plt.tight_layout()
-    plt.savefig(os.path.join(OUTPUT, name + ".png"))
-    plt.close()
+def evaluate(model, num_test_batches: int, test_batches: list[Batch], device: torch.device, criterion, res: Results, i: int):
+    log("Evaluating model")
+    with torch.no_grad():
+        model.eval()
+        losses = np.zeros(num_test_batches)
+        accuracies = np.zeros(num_test_batches)
+        for j, batch in tqdm(enumerate(test_batches), total=num_test_batches):
+            batch = batch.to(device)
+            out = model(batch)
+            losses[j] = criterion(out, batch.targets).item()
+            accuracies[j] = criterion(coerce_score(out), coerce_score(batch.targets)).item()
+        res.test_losses[i+1] = losses.mean()
+        res.accuracies[i+1] = accuracies.mean()
+        log("Mean test loss: %.4f" % res.test_losses[i], "Mean accuracy %.4f" % res.accuracies[i])
+        model.train()
 
 @click.command()
+@click.argument("location")
 @click.option("-m", "--model-name", default="roberta-base")
 @click.option("-b", "--batch-size", default=8, type=int)
 @click.option("--epochs", default=5, type=int)
-@click.option("--lr", default=1e-4, type=float)
+@click.option("--lr", default=2e-6, type=float)
 @click.option("--max-examples", default=0, type=int)
-def run(model_name: str, batch_size: int, epochs: int, lr: float, max_examples: int):
+def run(location: str, model_name: str, batch_size: int, epochs: int, lr: float, max_examples: int):
+
+    log.configure(
+        os.path.join(location, "movie-reviews-train.log"),
+        "Moview reviews training",
+        print_level=Levels.DEBUG,
+        log_commit=True,
+    )
+    def savefig(name: str):
+        plt.tight_layout()
+        plt.savefig(os.path.join(location, name + ".png"))
+        plt.close()
+
     log.section("Loading data")
     train_reviews, test_reviews = load_data(max_examples)
     log("Loaded %i training reviews and %i test reviews" % (len(train_reviews), len(test_reviews)))
@@ -144,9 +182,17 @@ def run(model_name: str, batch_size: int, epochs: int, lr: float, max_examples: 
     optimizer = AdamW([{"params": [p for _, p in model.named_parameters()], "weight_decay": 0.01}], lr=lr)
     num_updates = num_train_batches * epochs
     scheduler = get_linear_schedule_with_warmup(optimizer, int(0.06*num_updates), num_updates)
-    criterion = nn.L1Loss(reduction="sum")
+    criterion = nn.L1Loss()
 
     log.section("Training for %i epochs for a total of %i updates" % (epochs, num_train_batches))
+    res = Results(
+        epochs = epochs,
+        num_batches = num_train_batches,
+        train_losses = np.zeros(num_updates),
+        test_losses = np.zeros(epochs+1),
+        accuracies = np.zeros(epochs+1)
+    )
+    evaluate(model, num_test_batches, test_batches, device, criterion, res, -1)
     for i in range(epochs):
         log("Starting epoch %i" % i)
         shuffle(train_batches)
@@ -154,15 +200,20 @@ def run(model_name: str, batch_size: int, epochs: int, lr: float, max_examples: 
             batch = batch.to(device)
             out = model(batch)
             loss = criterion(out, batch.targets)
-            log.debug("Batch %i (ep. %i): Loss %.4f" % (j, i, loss.item()))
+            log.debug("Batch %i/%i (ep. %i/%i): Loss %.4f" % (j, num_train_batches-1, i, epochs-1, loss.item()))
+            res.train_losses[i*num_train_batches+j] = loss.item()
             loss.backward()
             optimizer.step()
             scheduler.step()
             model.zero_grad()
+        evaluate(model, num_test_batches, test_batches, device, criterion, res, i)
 
+        log("Saving model")
+        torch.save(model.state_dict(), os.path.join(location, model_name+f"_epoch_{i}.pt"))
 
+    log.section("Saving results to %s" % location)
+    res.save(os.path.join(location))
 
 if __name__ == "__main__":
-    log.configure("movie-reviews-train.log", "Moview reviews training", print_level=Levels.DEBUG, log_commit=True)
     with log.log_errors:
         run()
