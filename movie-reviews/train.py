@@ -31,7 +31,7 @@ class Example:
 
     @staticmethod
     def from_review(tokenizer, review: Review) -> Example:
-        id_arr = torch.zeros(tokenizer.model_max_length, dtype=torch.int32)
+        id_arr = torch.full((tokenizer.model_max_length,), fill_value=tokenizer.pad_token_id, dtype=torch.int32)
         ids = tokenizer.convert_tokens_to_ids(tokenizer.tokenize(review.review))
         num_ids = len(ids) + 2
         ids = ids[:tokenizer.model_max_length-2]
@@ -62,7 +62,8 @@ class Batch:
     def to(self, device: torch.device) -> Batch:
         return Batch(
             self.ids.to(device),
-            self.targets.to(device)
+            self.targets.to(device),
+            self.num_ids,
         )
 
     def __len__(self) -> int:
@@ -137,8 +138,8 @@ def evaluate(model, tokenizer, num_test_batches: int, test_batches: list[Batch],
         accuracies = np.zeros(num_test_batches)
         for j, batch in tqdm(enumerate(test_batches), total=num_test_batches):
             batch = batch.to(device)
-            out = model(batch, device)
-            losses[j] = criterion(out, tokenizer.pad_token_id, batch.targets).item()
+            out = model(batch, tokenizer.pad_token_id, device)
+            losses[j] = criterion(out, batch.targets).item()
             accuracies[j] = criterion(coerce_scores(out), coerce_scores(batch.targets)).item()
         res.test_losses[i+1] = losses.mean()
         res.accuracies[i+1] = accuracies.mean()
