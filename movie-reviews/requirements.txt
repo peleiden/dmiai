@@ -1,7 +1,0 @@
-transformers
-torch
-pelutils==0.6.9
-click
-numpy
-matplotlib
-tqdm

@@ -1,0 +1,12 @@
+flask
+flask-restful
+flask-cors
+pydantic
+
+pelutils==0.6.9
+transformers
+torch
+click
+numpy
+matplotlib
+tqdm

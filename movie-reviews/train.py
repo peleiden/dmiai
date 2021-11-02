@@ -26,17 +26,21 @@ class Review:
 class Example:
     ids: torch.IntTensor
     target: float  # From 0 to 1
+    num_tokens: int | None = None  # How many tokens are needed for the full example. Not equal to len(ids)
 
     @staticmethod
     def from_review(tokenizer, review: Review) -> Example:
         id_arr = torch.zeros(tokenizer.model_max_length, dtype=torch.int32)
-        ids = tokenizer.convert_tokens_to_ids(tokenizer.tokenize(review.review))[:tokenizer.model_max_length-2]
+        ids = tokenizer.convert_tokens_to_ids(tokenizer.tokenize(review.review))
+        num_ids = len(ids)
+        ids = ids[:tokenizer.model_max_length-2]
         id_arr[0] = tokenizer.cls_token_id
         id_arr[1:1+len(ids)] = torch.IntTensor(ids)
         id_arr[1+len(ids)] = tokenizer.sep_token_id
         return Example(
             id_arr,
             parse_score(review),
+            num_ids,
         )
 
 @dataclass
@@ -91,7 +95,7 @@ def parse_score(review: Review) -> float:
                 return score
     return -1
 
-def coerce_score(preds: torch.FloatTensor) -> torch.FloatTensor:
+def coerce_scores(preds: torch.FloatTensor) -> torch.FloatTensor:
     """ Converts predictions in [0, 1] to the used interval [0.5, 5] inplace """
     preds *= 5
     preds[preds<0.5] = 0.5
@@ -121,7 +125,7 @@ def evaluate(model, num_test_batches: int, test_batches: list[Batch], device: to
             batch = batch.to(device)
             out = model(batch)
             losses[j] = criterion(out, batch.targets).item()
-            accuracies[j] = criterion(coerce_score(out), coerce_score(batch.targets)).item()
+            accuracies[j] = criterion(coerce_scores(out), coerce_scores(batch.targets)).item()
         res.test_losses[i+1] = losses.mean()
         res.accuracies[i+1] = accuracies.mean()
         log("Mean test loss: %.4f" % res.test_losses[i], "Mean accuracy %.4f" % res.accuracies[i])
