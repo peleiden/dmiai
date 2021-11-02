@@ -5,7 +5,7 @@ import csv
 import os
 
 from pelutils import log, Levels, DataStorage
-from pelutils.ds.plot import update_rc_params, rc_params_small, figsize_std
+from pelutils.ds.plot import update_rc_params, rc_params_small, figsize_std, figsize_wide, tab_colours
 from tqdm import tqdm
 from transformers import AutoTokenizer, RobertaModel, AutoConfig, get_linear_schedule_with_warmup, AdamW
 import click
@@ -54,7 +54,7 @@ class Batch:
     def from_examples(examples: list[Example]) -> Batch:
         num_ids = max(ex.num_tokens for ex in examples)
         return Batch(
-            torch.stack([ex.ids[:num_ids] for ex in examples]),
+            torch.stack([ex.ids for ex in examples]),
             torch.FloatTensor([ex.target for ex in examples]),
             num_ids,
         )
@@ -89,14 +89,14 @@ class ScorePredictor(nn.Module):
 
     def forward(self, batch: Batch, pad_id: int, device: torch.device) -> torch.FloatTensor:
         cwrs = self.pretrained_model(batch.ids, return_dict=True)["last_hidden_state"]
-        with torch.no_grad():
-            new_cwrs = torch.empty(
-                len(batch),
-                self.max_input_size-cwrs.shape[1],
-                self.bert_config.hidden_size,
-            ).to(device)
-            new_cwrs[:] = self.state_dict()["pretrained_model.embeddings.word_embeddings.weight"][pad_id]
-            cwrs = torch.hstack([cwrs, new_cwrs])
+        # with torch.no_grad():
+        #     new_cwrs = torch.zeros(
+        #         len(batch),
+        #         self.max_input_size-cwrs.shape[1],
+        #         self.bert_config.hidden_size,
+        #     ).to(device)
+        #     new_cwrs[:] = self.state_dict()["pretrained_model.embeddings.word_embeddings.weight"][pad_id]
+        #     cwrs = torch.hstack([cwrs, new_cwrs])
         cwrs = cwrs.view(len(batch), -1).contiguous()
         return self.regressor(cwrs).squeeze()
 
@@ -106,16 +106,18 @@ def parse_score(review: Review) -> float:
         nom, denom = review.score.split("/")
         if denom not in ("0", "00"):
             score = float(nom) / float(denom)
-            if 0 <= score <= 5:
-                return score
+            if 0 <= score <= 1:
+                return score - 0.5
     return -1
 
-def coerce_scores(preds: torch.FloatTensor) -> torch.FloatTensor:
-    """ Converts predictions in [0, 1] to the used interval [0.5, 5] inplace """
-    preds *= 5
-    preds[preds<0.5] = 0.5
-    preds[preds>5] = 5
-    return preds
+def coerce_scores(scores: torch.FloatTensor) -> torch.FloatTensor:
+    """ Converts predictions in [0, 1] to the used interval [0.5, 5] """
+    scores = scores.clone()
+    scores += 0.5
+    scores *= 5
+    scores[scores<0.5] = 0.5
+    scores[scores>5] = 5
+    return scores
 
 def load_data(max_examples: int, test_train_split=0.01) -> tuple[list[Review], list[Review]]:
     reviews = list()
@@ -130,8 +132,22 @@ def load_data(max_examples: int, test_train_split=0.01) -> tuple[list[Review], l
     n_train = int((1-test_train_split) * len(reviews))
     return reviews[:n_train], reviews[n_train:]
 
-def evaluate(model, tokenizer, num_test_batches: int, test_batches: list[Batch], device: torch.device, criterion, res: Results, i: int):
+def evaluate(model, tokenizer, num_test_batches: int, test_batches: list[Batch], device: torch.device, criterion, res: Results, i: int, plot_preds=False, location: str=""):
     log("Evaluating model")
+    if plot_preds:
+        plt.figure(figsize=figsize_wide)
+        plt.subplot(121)
+        plt.xlabel("Target")
+        plt.ylabel("Predicted")
+        plt.plot([-.5, .5], [-.5, .5])
+        plt.title("Training domain")
+        plt.grid()
+        plt.subplot(122)
+        plt.xlabel("Target")
+        plt.ylabel("Predicted")
+        plt.plot([0, 5], [0, 5])
+        plt.title("Prediction domain")
+        plt.subplot(121)
     with torch.no_grad():
         model.eval()
         losses = np.zeros(num_test_batches)
@@ -140,18 +156,27 @@ def evaluate(model, tokenizer, num_test_batches: int, test_batches: list[Batch],
             batch = batch.to(device)
             out = model(batch, tokenizer.pad_token_id, device)
             losses[j] = criterion(out, batch.targets).item()
-            accuracies[j] = criterion(coerce_scores(out), coerce_scores(batch.targets)).item()
+            accuracies[j] = nn.L1Loss()(coerce_scores(out), coerce_scores(batch.targets)).item()
+            if plot_preds:
+                plt.subplot(121)
+                plt.scatter(batch.targets.cpu().numpy(), out.cpu().numpy(), c=tab_colours[0])
+                plt.subplot(122)
+                plt.scatter(coerce_scores(batch.targets).cpu().numpy(), coerce_scores(out).cpu().numpy(), c=tab_colours[0])
         res.test_losses[i+1] = losses.mean()
         res.accuracies[i+1] = accuracies.mean()
-        log("Mean test loss: %.4f" % res.test_losses[i], "Mean accuracy %.4f" % res.accuracies[i])
+        log("Mean test loss: %.4f" % res.test_losses[i+1], "Mean accuracy %.4f" % res.accuracies[i+1])
         model.train()
+    if plot_preds:
+        plt.tight_layout()
+        plt.savefig(os.path.join(location, "preds" + ".png"))
+        plt.close()
 
 @click.command()
 @click.argument("location")
 @click.option("-m", "--model-name", default="roberta-base")
 @click.option("-b", "--batch-size", default=8, type=int)
 @click.option("--epochs", default=5, type=int)
-@click.option("--lr", default=2e-6, type=float)
+@click.option("--lr", default=1e-6, type=float)
 @click.option("--max-examples", default=0, type=int)
 def run(location: str, model_name: str, batch_size: int, epochs: int, lr: float, max_examples: int):
 
@@ -225,7 +250,7 @@ def run(location: str, model_name: str, batch_size: int, epochs: int, lr: float,
             optimizer.step()
             scheduler.step()
             model.zero_grad()
-        evaluate(model, tokenizer, num_test_batches, test_batches, device, criterion, res, i)
+        evaluate(model, tokenizer, num_test_batches, test_batches, device, criterion, res, i, i==epochs-1, location)
 
         log("Saving model")
         torch.save(model.state_dict(), os.path.join(location, model_name+f"_epoch_{i}.pt"))
