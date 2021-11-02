@@ -105,6 +105,7 @@ def parse_score(review: Review) -> float:
     if review.score.endswith("/5"):
         nom, denom = review.score.split("/")
         if denom not in ("0", "00"):
+            print(nom, denom)
             score = float(nom) / float(denom)
             if 0 <= score <= 1:
                 return score - 0.5
