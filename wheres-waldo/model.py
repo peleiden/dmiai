@@ -3,6 +3,7 @@ from abc import ABC, abstractmethod
 import cv2
 import pandas as pd
 import numpy as np
+from facenet_pytorch import MTCNN, InceptionResnetV1
 
 from data_utils import load_img
 
@@ -50,8 +51,16 @@ class TemplateMatcher(WaldoModel):
             print(f"Best template {self.template_paths[i]} w/ score {round(scores[i], 4)}")
         return locs[i]
 
+# class FaceNet(WaldoModel):
+#     def __init__(self):
+
+
+
 if __name__ == "__main__":
     df = pd.read_pickle("data/df.pkl")
-    imgs = df[df.waldo].img
+    img = df[df.waldo].img.iloc[0]
     m = TemplateMatcher(["assets/templates/face.jpg", "assets/templates/torso.jpg"])
-    print(m.predict(imgs.iloc[0]))
+    # print(m.predict(img))
+    mtcnn = MTCNN(64, min_face_size=10, keep_all=True)
+    mtcnn(img)
+    breakpoint()
