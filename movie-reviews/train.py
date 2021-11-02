@@ -26,13 +26,14 @@ class Review:
 class Example:
     ids: torch.IntTensor
     target: float  # From 0 to 1
-    num_tokens: int | None = None  # How many tokens are needed for the full example. Not equal to len(ids)
+    # How many tokens are needed for the full example (including cls and sep). Rarely equal to len(ids)
+    num_tokens: int | None = None
 
     @staticmethod
     def from_review(tokenizer, review: Review) -> Example:
         id_arr = torch.zeros(tokenizer.model_max_length, dtype=torch.int32)
         ids = tokenizer.convert_tokens_to_ids(tokenizer.tokenize(review.review))
-        num_ids = len(ids)
+        num_ids = len(ids) + 2
         ids = ids[:tokenizer.model_max_length-2]
         id_arr[0] = tokenizer.cls_token_id
         id_arr[1:1+len(ids)] = torch.IntTensor(ids)
@@ -45,14 +46,17 @@ class Example:
 
 @dataclass
 class Batch:
-    ids: torch.IntTensor  # batch size x max length
+    ids: torch.IntTensor  # batch size x num ids
     targets: torch.FloatTensor  # batch size
+    num_ids: int
 
     @staticmethod
     def from_examples(examples: list[Example]) -> Batch:
+        num_ids = max(ex.num_tokens for ex in examples)
         return Batch(
-            torch.stack([ex.ids for ex in examples]),
-            torch.FloatTensor([ex.target for ex in examples])
+            torch.stack([ex.ids[:num_ids] for ex in examples]),
+            torch.FloatTensor([ex.target for ex in examples]),
+            num_ids,
         )
 
     def to(self, device: torch.device) -> Batch:
@@ -78,10 +82,20 @@ class ScorePredictor(nn.Module):
     def __init__(self, pretrained_model: nn.Module, bert_config: AutoConfig, max_input_size: int):
         super().__init__()
         self.pretrained_model = pretrained_model
+        self.max_input_size = max_input_size
+        self.bert_config = bert_config
         self.regressor = nn.Linear(bert_config.hidden_size*max_input_size, 1)
 
-    def forward(self, batch: Batch) -> torch.FloatTensor:
+    def forward(self, batch: Batch, pad_id: int, device: torch.device) -> torch.FloatTensor:
         cwrs = self.pretrained_model(batch.ids, return_dict=True)["last_hidden_state"]
+        with torch.no_grad():
+            new_cwrs = torch.empty(
+                len(batch),
+                self.max_input_size-cwrs.shape[1],
+                self.bert_config.hidden_size,
+            ).to(device)
+            new_cwrs[:] = self.state_dict()["pretrained_model.embeddings.word_embeddings.weight"][pad_id]
+            cwrs = torch.hstack([cwrs, new_cwrs])
         cwrs = cwrs.view(len(batch), -1).contiguous()
         return self.regressor(cwrs).squeeze()
 
@@ -115,7 +129,7 @@ def load_data(max_examples: int, test_train_split=0.01) -> tuple[list[Review], l
     n_train = int((1-test_train_split) * len(reviews))
     return reviews[:n_train], reviews[n_train:]
 
-def evaluate(model, num_test_batches: int, test_batches: list[Batch], device: torch.device, criterion, res: Results, i: int):
+def evaluate(model, tokenizer, num_test_batches: int, test_batches: list[Batch], device: torch.device, criterion, res: Results, i: int):
     log("Evaluating model")
     with torch.no_grad():
         model.eval()
@@ -123,8 +137,8 @@ def evaluate(model, num_test_batches: int, test_batches: list[Batch], device: to
         accuracies = np.zeros(num_test_batches)
         for j, batch in tqdm(enumerate(test_batches), total=num_test_batches):
             batch = batch.to(device)
-            out = model(batch)
-            losses[j] = criterion(out, batch.targets).item()
+            out = model(batch, device)
+            losses[j] = criterion(out, tokenizer.pad_token_id, batch.targets).item()
             accuracies[j] = criterion(coerce_scores(out), coerce_scores(batch.targets)).item()
         res.test_losses[i+1] = losses.mean()
         res.accuracies[i+1] = accuracies.mean()
@@ -196,13 +210,13 @@ def run(location: str, model_name: str, batch_size: int, epochs: int, lr: float,
         test_losses = np.zeros(epochs+1),
         accuracies = np.zeros(epochs+1)
     )
-    evaluate(model, num_test_batches, test_batches, device, criterion, res, -1)
+    evaluate(model, tokenizer, num_test_batches, test_batches, device, criterion, res, -1)
     for i in range(epochs):
         log("Starting epoch %i" % i)
         shuffle(train_batches)
         for j, batch in enumerate(train_batches):
             batch = batch.to(device)
-            out = model(batch)
+            out = model(batch, tokenizer.pad_token_id, device)
             loss = criterion(out, batch.targets)
             log.debug("Batch %i/%i (ep. %i/%i): Loss %.4f" % (j, num_train_batches-1, i, epochs-1, loss.item()))
             res.train_losses[i*num_train_batches+j] = loss.item()
@@ -210,7 +224,7 @@ def run(location: str, model_name: str, batch_size: int, epochs: int, lr: float,
             optimizer.step()
             scheduler.step()
             model.zero_grad()
-        evaluate(model, num_test_batches, test_batches, device, criterion, res, i)
+        evaluate(model, tokenizer, num_test_batches, test_batches, device, criterion, res, i)
 
         log("Saving model")
         torch.save(model.state_dict(), os.path.join(location, model_name+f"_epoch_{i}.pt"))

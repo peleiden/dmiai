@@ -6,7 +6,7 @@ pydantic
 pelutils==0.6.9
 transformers
 torch
-click
+click>=7.1.2
 numpy
 matplotlib
 tqdm

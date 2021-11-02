@@ -21,7 +21,8 @@ bert_config = AutoConfig.from_pretrained(model_name)
 tokenizer = AutoTokenizer.from_pretrained(model_name)
 model = RobertaModel.from_pretrained(model_name)
 model = ScorePredictor(model, bert_config, tokenizer.model_max_length)
-model.load_state_dict(torch.load("movie-reviews/%s.pt" % model_name, map_location=torch.device("cpu")))
+sd = torch.load("movie-reviews/%s.pt" % model_name, map_location=torch.device("cpu"))
+model.load_state_dict(sd)
 model.eval()
 
 start_time = time.time()
@@ -74,6 +75,9 @@ def predict():
     # Score does not matter here, it just has to be parsable for code to work
     reviews = [Review(s, "5/5") for s in review_strings]
     examples = [Example.from_review(tokenizer, review) for review in reviews]
+    # Sort by number of tokens
+    sort_ids = np.argsort([ex.num_tokens for ex in examples])
+    examples = [examples[i] for i in sort_ids]
     num_tokens = np.array([ex.num_tokens for ex in examples])
     log.debug(
         "Number of reviews: %i" % len(examples),
@@ -86,17 +90,19 @@ def predict():
     for i in range(num_batches):
         batches.append(Batch.from_examples(examples[i*batch_size:(i+1)*batch_size]))
     if (remaining_examples := len(examples) % batch_size) != 0:
-        batches.append(Batch.from_examples(examples[:-remaining_examples]))
+        batches.append(Batch.from_examples(examples[-remaining_examples:]))
         num_batches += 1
     assert num_batches == len(batches)
-    preds = torch.empty(num_batches, dtype=float)
+    preds = torch.empty(len(examples), dtype=float)
     with torch.no_grad():
         c = 0
         for i, batch in enumerate(batches):
             log.debug("Processing batch %i / %i which has size %i" % (i, num_batches-1, len(batch)))
-            preds[c:c+len(batch)] = model(batch)
+            preds[c:c+len(batch)] = model(batch, tokenizer.pad_token_id, torch.device("cpu"))
             c += len(batch)
-        assert c == num_batches
+        assert c == len(examples)
+    # Reverse sorts
+    preds = preds[np.argsort(sort_ids)]
     return PredictResponse(ratings=coerce_scores(preds).tolist())
 
 if __name__ == "__main__":
