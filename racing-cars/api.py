@@ -1,10 +1,12 @@
 from __future__ import annotations
+from dataclasses import dataclass
 from enum import Enum
 from functools import wraps
 from typing import Any, List
 import datetime
 import json
 import logging
+import pickle
 import time
 log = logging.getLogger('werkzeug')
 log.setLevel(logging.ERROR)
@@ -12,20 +14,37 @@ log.setLevel(logging.ERROR)
 from flask import Flask, request, jsonify
 from flask_restful import Api
 from flask_cors import CORS
-from pelutils import log
+from pelutils import log, DataStorage
 from pydantic import BaseModel
 import numpy as np
 
 import train
+
+PORT = 6971
+TRAIN = True
 
 start_time = time.time()
 app = Flask(__name__)
 Api(app)
 CORS(app)
 
-model = train.DeepQ()
+if TRAIN:
+    model = train.DeepQ(train=True)
+else:
+    with open("model-%s.pkl" % PORT) as f:
+        model = pickle.load(f)
+num_episodes = 0
 episode_actions = list()
 episode_states = list()
+
+
+@dataclass
+class Data(DataStorage):
+    rewards: list[float]
+    loss: list[float]
+    dist: list[int]
+    timesteps: list[int]
+train_data = Data([], [], [], [])
 
 class PredictResponse(BaseModel):
     action: train.ActionType
@@ -73,27 +92,37 @@ def predict():
 @app.route("/api/predict", methods=["POST"])
 @api_fun
 def predict_train():
-    global episode_actions, episode_states, model
+    global episode_actions, episode_states, model, num_episodes
     data = _get_data()
 
     state = train.State.from_dict(data)
-    action = model.predict(state, train=True)
+    action = model.predict(state)
     # log("Making action %s" % action)
     episode_actions.append(action)
 
     episode_states.append(state)
     if state.did_crash:
-        episodes = [
+        episode = [
             train.Experience(
                 st, at, stt.distance-st.distance, stt,
             ) for st, at, stt in zip(episode_states[:-1], episode_actions[:-1], episode_states[1:])
         ]
-        log("Updating using %i experiences" % len(episodes))
-        model.update(episodes)
+        log("Updating using %i experiences" % len(episode))
+        if TRAIN:
+            loss, tr = model.update(episode)
+            train_data.loss.append(loss)
+            train_data.rewards.append(tr)
+            train_data.dist.append(episode[-1].stt.distance)
+            train_data.timesteps.append(len(episode_actions)+1)
         episode_states = list()
         episode_actions = list()
+        num_episodes += 1
+        if num_episodes % 100 == 0 and TRAIN:
+            log("Saving data")
+            with open("model-%s.pkl" % PORT, "wb") as f:
+                pickle.dump(model, f)
+            train_data.save("autobahn-training-%s" % PORT)
 
-    import random
     return PredictResponse(
         action=action
     )
@@ -105,4 +134,4 @@ if __name__ == "__main__":
         log_commit=True,
         append=False,
     )
-    app.run(host="0.0.0.0", port=6971, debug="Tue")
+    app.run(host="0.0.0.0", port=PORT, debug=not "Tue")

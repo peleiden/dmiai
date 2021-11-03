@@ -1,6 +1,8 @@
 data
 output
-.pt
+*.pt
+*.pkl
+autobahn-training*
 
 *.vscode
 **/local_*/

@@ -224,7 +224,7 @@ def run(location: str, model_name: str, batch_size: int, epochs: int, lr: float,
     log("Created %i training batches and %i test batches" % (num_train_batches, num_test_batches))
 
     log.section("Setting up loss, scheduler, and optimizer")
-    optimizer = AdamW([{"params": [p for _, p in model.named_parameters()], "weight_decay": 0.01}], lr=lr)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
     num_updates = num_train_batches * epochs
     scheduler = get_linear_schedule_with_warmup(optimizer, int(0.06*num_updates), num_updates)
     criterion = nn.L1Loss()
