@@ -13,20 +13,19 @@ from pelutils import log
 from pydantic import BaseModel
 import numpy as np
 
+import train
+
 start_time = time.time()
 app = Flask(__name__)
 Api(app)
 CORS(app)
 
-class ActionType(str, Enum):
-    ACCELERATE = 'ACCELERATE'
-    DECELERATE = 'DECELERATE'
-    STEER_RIGHT = 'STEER_RIGHT'
-    STEER_LEFT = 'STEER_LEFT'
-    NOTHING = 'NOTHING'
+model = train.Model()
+episode_actions = list()
+episode_states = list()
 
 class PredictResponse(BaseModel):
-    action: ActionType
+    action: train.ActionType
 
 def get_uptime() -> str:
     return '{}'.format(datetime.timedelta(seconds=time.time() - start_time))
@@ -56,21 +55,44 @@ def api_fun(func):
 def api():
     return {
         "uptime": get_uptime(),
-        "service": "movie-reviews",
+        "service": "racing-cars",
     }
+
+@app.route("/api/predict_", methods=["POST"])
+@api_fun
+def predict():
+    # actions = [train.ActionType.ACCELERATE, train.ActionType.DECELERATE,
+    #     train.ActionType.STEER_LEFT, train.ActionType.STEER_RIGHT,
+    #     train.ActionType.NOTHING]
+    # return PredictResponse(action=train.ActionType.ACCELERATE)
+    pass
 
 @app.route("/api/predict", methods=["POST"])
 @api_fun
-def predict():
+def predict_train():
+    global episode_actions, episode_states, model
     data = _get_data()
-    actions = [ActionType.ACCELERATE, ActionType.DECELERATE,
-            ActionType.STEER_LEFT, ActionType.STEER_RIGHT,
-            ActionType.NOTHING]
-    log(data)
+
+    import random
+    state = train.State.from_dict(data)
+    # TODO Use model.predict here
+    action = random.choice(train.ALL_ACTIONS)
+    # episode_actions.append(action)
+
+    # episode_states.append(state)
+    # if state.did_crash:
+    #     episodes = [
+    #         train.Experience(
+    #             st, at, stt.distance-st.distance, stt,
+    #         ) for st, at, stt in zip(episode_states[:-1], episode_actions[:-1], episode_states[1:])
+    #     ]
+    #     model.update(episodes)
+    #     episode_states = list()
+    #     episode_actions = list()
 
     import random
     return PredictResponse(
-        action=random.choice(actions)
+        action=action
     )
 
 if __name__ == "__main__":

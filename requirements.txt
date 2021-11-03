@@ -10,3 +10,4 @@ click>=7.1.2
 numpy
 matplotlib
 tqdm
+requests
