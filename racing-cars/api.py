@@ -4,7 +4,10 @@ from functools import wraps
 from typing import Any, List
 import datetime
 import json
+import logging
 import time
+log = logging.getLogger('werkzeug')
+log.setLevel(logging.ERROR)
 
 from flask import Flask, request, jsonify
 from flask_restful import Api
@@ -20,7 +23,7 @@ app = Flask(__name__)
 Api(app)
 CORS(app)
 
-model = train.Model()
+model = train.DeepQ()
 episode_actions = list()
 episode_states = list()
 
@@ -42,7 +45,7 @@ def api_fun(func):
     @wraps(func)
     def wrapper(*args, **kwargs):
         with log.log_errors:
-            log("Received call to %s" % func.__name__)
+            # log("Received call to %s" % func.__name__)
             res = func(*args, **kwargs)
             if isinstance(res, PredictResponse):
                 return jsonify(json.loads(res.json()))
@@ -73,22 +76,22 @@ def predict_train():
     global episode_actions, episode_states, model
     data = _get_data()
 
-    import random
     state = train.State.from_dict(data)
-    # TODO Use model.predict here
-    action = random.choice(train.ALL_ACTIONS)
-    # episode_actions.append(action)
+    action = model.predict(state, train=True)
+    # log("Making action %s" % action)
+    episode_actions.append(action)
 
-    # episode_states.append(state)
-    # if state.did_crash:
-    #     episodes = [
-    #         train.Experience(
-    #             st, at, stt.distance-st.distance, stt,
-    #         ) for st, at, stt in zip(episode_states[:-1], episode_actions[:-1], episode_states[1:])
-    #     ]
-    #     model.update(episodes)
-    #     episode_states = list()
-    #     episode_actions = list()
+    episode_states.append(state)
+    if state.did_crash:
+        episodes = [
+            train.Experience(
+                st, at, stt.distance-st.distance, stt,
+            ) for st, at, stt in zip(episode_states[:-1], episode_actions[:-1], episode_states[1:])
+        ]
+        log("Updating using %i experiences" % len(episodes))
+        model.update(episodes)
+        episode_states = list()
+        episode_actions = list()
 
     import random
     return PredictResponse(
@@ -102,4 +105,4 @@ if __name__ == "__main__":
         log_commit=True,
         append=False,
     )
-    app.run(host="0.0.0.0", port=6971, debug=False)
+    app.run(host="0.0.0.0", port=6971, debug="Tue")
