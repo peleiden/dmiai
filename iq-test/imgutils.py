@@ -1,3 +1,4 @@
+from __future__ import annotations
 import numpy as np
 from skimage.metrics import structural_similarity
 from skimage.filters import gaussian
