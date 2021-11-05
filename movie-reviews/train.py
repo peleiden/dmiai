@@ -15,6 +15,8 @@ import torch
 import torch.nn as nn
 
 
+# Set to None to use max length
+NUM_TOKENS = 380
 update_rc_params(rc_params_small)
 
 @dataclass
@@ -26,44 +28,36 @@ class Review:
 class Example:
     ids: torch.IntTensor
     target: float  # From 0 to 1
-    # How many tokens are needed for the full example (including cls and sep). Rarely equal to len(ids)
-    num_tokens: int | None = None
 
     @staticmethod
     def from_review(tokenizer, review: Review) -> Example:
-        id_arr = torch.full((tokenizer.model_max_length,), fill_value=tokenizer.pad_token_id, dtype=torch.int32)
+        id_arr = torch.full((NUM_TOKENS+2,), fill_value=tokenizer.pad_token_id, dtype=torch.int32)
         ids = tokenizer.convert_tokens_to_ids(tokenizer.tokenize(review.review))
-        num_ids = len(ids) + 2
-        ids = ids[:tokenizer.model_max_length-2]
+        ids = ids[:NUM_TOKENS]
         id_arr[0] = tokenizer.cls_token_id
         id_arr[1:1+len(ids)] = torch.IntTensor(ids)
         id_arr[1+len(ids)] = tokenizer.sep_token_id
         return Example(
             id_arr,
             parse_score(review),
-            num_ids,
         )
 
 @dataclass
 class Batch:
     ids: torch.IntTensor  # batch size x num ids
     targets: torch.FloatTensor  # batch size
-    num_ids: int
 
     @staticmethod
     def from_examples(examples: list[Example]) -> Batch:
-        num_ids = max(ex.num_tokens for ex in examples)
         return Batch(
             torch.stack([ex.ids for ex in examples]),
             torch.FloatTensor([ex.target for ex in examples]),
-            num_ids,
         )
 
     def to(self, device: torch.device) -> Batch:
         return Batch(
             self.ids.to(device),
             self.targets.to(device),
-            self.num_ids,
         )
 
     def __len__(self) -> int:
@@ -80,23 +74,13 @@ class Results(DataStorage):
 
 class ScorePredictor(nn.Module):
 
-    def __init__(self, pretrained_model: nn.Module, bert_config: AutoConfig, max_input_size: int):
+    def __init__(self, pretrained_model: nn.Module, bert_config: AutoConfig):
         super().__init__()
         self.pretrained_model = pretrained_model
-        self.max_input_size = max_input_size
-        self.bert_config = bert_config
-        self.regressor = nn.Linear(bert_config.hidden_size*max_input_size, 1)
+        self.regressor = nn.Linear(bert_config.hidden_size*(NUM_TOKENS+2), 1)
 
-    def forward(self, batch: Batch, pad_id: int, device: torch.device) -> torch.FloatTensor:
+    def forward(self, batch: Batch) -> torch.FloatTensor:
         cwrs = self.pretrained_model(batch.ids, return_dict=True)["last_hidden_state"]
-        # with torch.no_grad():
-        #     new_cwrs = torch.zeros(
-        #         len(batch),
-        #         self.max_input_size-cwrs.shape[1],
-        #         self.bert_config.hidden_size,
-        #     ).to(device)
-        #     new_cwrs[:] = self.state_dict()["pretrained_model.embeddings.word_embeddings.weight"][pad_id]
-        #     cwrs = torch.hstack([cwrs, new_cwrs])
         cwrs = cwrs.view(len(batch), -1).contiguous()
         return self.regressor(cwrs).squeeze()
 
@@ -154,7 +138,7 @@ def evaluate(model, tokenizer, num_test_batches: int, test_batches: list[Batch],
         accuracies = np.zeros(num_test_batches)
         for j, batch in tqdm(enumerate(test_batches), total=num_test_batches):
             batch = batch.to(device)
-            out = model(batch, tokenizer.pad_token_id, device)
+            out = model(batch)
             losses[j] = criterion(out, batch.targets).item()
             accuracies[j] = nn.L1Loss()(coerce_scores(out), coerce_scores(batch.targets)).item()
             if plot_preds:
@@ -199,8 +183,11 @@ def run(location: str, model_name: str, batch_size: int, epochs: int, lr: float,
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     bert_config = AutoConfig.from_pretrained(model_name)
     tokenizer = AutoTokenizer.from_pretrained(model_name)
+    global NUM_TOKENS
+    if NUM_TOKENS is None:
+        NUM_TOKENS = tokenizer.model_max_length
     model = RobertaModel.from_pretrained(model_name)
-    model = ScorePredictor(model, bert_config, tokenizer.model_max_length).to(device)
+    model = ScorePredictor(model, bert_config).to(device)
 
     log.section("Building examples")
     train_examples = [ex for review in tqdm(train_reviews) if (ex := Example.from_review(tokenizer, review)).target != -1]
@@ -211,7 +198,6 @@ def run(location: str, model_name: str, batch_size: int, epochs: int, lr: float,
     plt.figure(figsize=figsize_std)
     plt.hist(train_targets, bins=50)
     plt.title("Score distribution in training data\nMean = %.2f, std = %.2f" % (train_targets.mean(), train_targets.std()))
-
     savefig("data-dist")
 
     # Creating batches
@@ -242,7 +228,7 @@ def run(location: str, model_name: str, batch_size: int, epochs: int, lr: float,
         shuffle(train_batches)
         for j, batch in enumerate(train_batches):
             batch = batch.to(device)
-            out = model(batch, tokenizer.pad_token_id, device)
+            out = model(batch)
             loss = criterion(out, batch.targets)
             log.debug("Batch %i/%i (ep. %i/%i): Loss %.4f" % (j, num_train_batches-1, i, epochs-1, loss.item()))
             res.train_losses[i*num_train_batches+j] = loss.item()
@@ -254,9 +240,10 @@ def run(location: str, model_name: str, batch_size: int, epochs: int, lr: float,
 
         log("Saving model")
         torch.save(model.state_dict(), os.path.join(location, model_name+f"_epoch_{i}.pt"))
+        res.save(location)
 
     log.section("Saving results to %s" % location)
-    res.save(os.path.join(location))
+    res.save(location)
 
 if __name__ == "__main__":
     with log.log_errors:

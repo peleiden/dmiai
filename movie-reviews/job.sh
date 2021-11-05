@@ -11,7 +11,7 @@
 #BSUB -u s183912@dtu.dk
 #BSUB -N
 
-LOC=/work3/$USER/dmiai/movie-review
+LOC=/work3/$USER/dmiai/movie-review380
 alias python=/appl/python/3.8.4/bin/python3
-python train.py $LOC --batch-size 64 --model-name roberta-base --lr 2e-6 --epochs 10
+python train.py $LOC --batch-size 32 --model-name roberta-base --lr 2e-6 --epochs 5
 python plot.py $LOC
