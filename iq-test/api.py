@@ -4,6 +4,7 @@ import base64
 import datetime
 import json
 import time
+from io import BytesIO
 import numpy as np
 
 from flask import Flask, request, jsonify
@@ -33,11 +34,17 @@ def get_uptime() -> str:
 def _get_data():
     """ Returns the five images for IQ test """
     data = json.loads(request.data.decode("ascii"))
-    imgs = [data["image_base64"], *data["image_choices_base64"]]
-    imgs = tuple(base64.b64decode(img) for img in imgs)
-    rule_img = np.array(Image.frombytes("RGB", (550, 440), imgs[0]))
-    choice_imgs = [np.array(Image.frombytes("RGB", (110, 110), img)) for img in imgs[1:]]
-    return rule_img, choice_imgs
+    encoded_imgs = [data["image_base64"], *data["image_choices_base64"]]
+    imgs = list()
+    for img in encoded_imgs:
+        img = base64.b64decode(img)
+        sbuf = BytesIO()
+        sbuf.write(img)
+        img = Image.open(sbuf)
+        imgs.append(np.array(img))
+    #rule_img = np.array(Image.frombytes("RGB", (550, 440), imgs[0]))
+    #choice_imgs = [np.array(Image.frombytes("RGB", (110, 110), img)) for img in imgs[1:]]
+    return imgs[0], imgs[1:]
 
 def api_fun(func):
     @wraps(func)
@@ -76,4 +83,4 @@ if __name__ == "__main__":
         log_commit=True,
         append=True,
     )
-    app.run(host="0.0.0.0", port=6973, debug=False)
+    app.run(host="0.0.0.0", port=6972, debug=False)

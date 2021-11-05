@@ -1,3 +1,4 @@
+from __future__ import annotations
 from abc import ABC, abstractmethod
 from itertools import chain
 
@@ -72,7 +73,7 @@ class HighestSimilarity(IQModel):
                 )
         options = pd.DataFrame(options)
         mean_mses = options.groupby("choice").mean()
-        return mean_mses.argmin()
+        return mean_mses.mse.argmin()
 
 if __name__ == "__main__":
     from PIL import Image
