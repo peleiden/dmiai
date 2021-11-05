@@ -1,0 +1,11 @@
+flask
+flask_restful
+pelutils
+flask_cors
+pydantic
+
+Pillow
+tensorflow==1.14
+numpy==1.17
+cython
+https://github.com/thtrieu/darkflow/archive/master.zip
