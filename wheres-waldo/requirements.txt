@@ -15,3 +15,4 @@ keras-resnet==0.1.0
 keras-retinanet==0.4.1
 keras==2.2.0
 https://github.com/thtrieu/darkflow/archive/master.zip
+https://github.com/arrufat/wallyfinder/archive/master.zip
