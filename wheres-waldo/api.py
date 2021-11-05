@@ -17,9 +17,11 @@ from PIL import Image
 
 from yolo_model import setup_yolo_model, yolo_predict
 from magajna_model import setup_magajna_model, magajna_predict
+from retina_model import setup_retina_model, retina_predict
 
 yolo_model = setup_yolo_model()
 magajna_model = setup_magajna_model()
+retina_model = setup_retina_model()
 
 start_time = time.time()
 
@@ -65,6 +67,7 @@ def predict():
     img = _get_data()
     x, y = yolo_predict(yolo_model, img)
     #x, y = magajna_predict(magajna_model, img)
+    #x, y = retina_predict(retina_model, img)
     log(f"Predicted {x,y}")
     return PredictResponse(x=x, y=y)
 

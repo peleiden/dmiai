@@ -36,7 +36,7 @@ def magajna_predict(model, img: np.ndarray) -> tuple[int, int]:
 
 if __name__ == "__main__":
     from PIL import Image
-    m = setup_model()
+    m = setup_magajna_model()
     print(
         magajna_predict(m, np.array(Image.open("data/waldo/1_1_1.jpg")))
     )
