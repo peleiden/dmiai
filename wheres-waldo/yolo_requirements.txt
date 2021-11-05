@@ -4,6 +4,7 @@ pelutils
 flask_cors
 pydantic
 
+opencv-python
 Pillow
 tensorflow==1.14
 numpy==1.17
