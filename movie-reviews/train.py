@@ -45,13 +45,16 @@ class Example:
 @dataclass
 class Batch:
     ids: torch.IntTensor  # batch size x num ids
-    targets: torch.FloatTensor  # batch size
+    targets: torch.LongTensor  # batch size
 
-    @staticmethod
-    def from_examples(examples: list[Example]) -> Batch:
+    class_stars = np.linspace([-0.5, 0.5, 12])[1:-1]
+
+    @classmethod
+    def from_examples(cls, examples: list[Example]) -> Batch:
+        targets = torch.argmin(torch.vstack([torch.Tensor([ex.target for ex in examples])]*10).T-cls.class_stars, dim=1).long()
         return Batch(
             torch.stack([ex.ids for ex in examples]),
-            torch.FloatTensor([ex.target for ex in examples]),
+            targets,
         )
 
     def to(self, device: torch.device) -> Batch:
@@ -77,12 +80,12 @@ class ScorePredictor(nn.Module):
     def __init__(self, pretrained_model: nn.Module, bert_config: AutoConfig):
         super().__init__()
         self.pretrained_model = pretrained_model
-        self.regressor = nn.Linear(bert_config.hidden_size*NUM_TOKENS, 1)
+        self.classifier = nn.Linear(bert_config.hidden_size*NUM_TOKENS, 10)
 
     def forward(self, batch: Batch) -> torch.FloatTensor:
         cwrs = self.pretrained_model(batch.ids, return_dict=True)["last_hidden_state"]
         cwrs = cwrs.view(len(batch), -1).contiguous()
-        return self.regressor(cwrs).squeeze()
+        return self.classifier(cwrs).squeeze()
 
 def parse_score(review: Review) -> float:
     """ Parses a review score. Returns -1 if unparsable """
@@ -140,12 +143,13 @@ def evaluate(model, tokenizer, num_test_batches: int, test_batches: list[Batch],
             batch = batch.to(device)
             out = model(batch)
             losses[j] = criterion(out, batch.targets).item()
-            accuracies[j] = nn.L1Loss()(coerce_scores(out), coerce_scores(batch.targets)).item()
+            pred_stars = coerce_scores(torch.from_numpy(Batch.class_stars[torch.argmax(out, dim=1)])).numpy()
+            accuracies[j] = nn.L1Loss()(pred_stars, coerce_scores(batch.targets)).item()
             if plot_preds:
                 plt.subplot(121)
-                plt.scatter(batch.targets.cpu().numpy(), out.cpu().numpy(), c=tab_colours[0])
+                plt.scatter(batch.targets.cpu().numpy(), pred_stars, c=tab_colours[0])
                 plt.subplot(122)
-                plt.scatter(coerce_scores(batch.targets).cpu().numpy(), coerce_scores(out).cpu().numpy(), c=tab_colours[0])
+                plt.scatter(coerce_scores(batch.targets).cpu().numpy(), pred_stars, c=tab_colours[0])
         res.test_losses[i+1] = losses.mean()
         res.accuracies[i+1] = accuracies.mean()
         log("Mean test loss: %.4f" % res.test_losses[i+1], "Mean accuracy %.4f" % res.accuracies[i+1])
@@ -209,7 +213,7 @@ def run(location: str, model_name: str, batch_size: int, epochs: int, lr: float,
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
     num_updates = num_train_batches * epochs
     scheduler = get_linear_schedule_with_warmup(optimizer, int(0.06*num_updates), num_updates)
-    criterion = nn.L1Loss()
+    criterion = nn.CrossEntropyLoss()
 
     log.section("Training for %i epochs for a total of %i updates" % (epochs, num_updates))
     res = Results(
