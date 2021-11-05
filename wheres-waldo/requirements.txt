@@ -4,9 +4,14 @@ pelutils
 flask_cors
 pydantic
 
+
 opencv-python
 Pillow
 tensorflow==1.14
 numpy==1.17
 cython
+h5py==2.8.0
+keras-resnet==0.1.0
+keras-retinanet==0.4.1
+keras==2.2.0
 https://github.com/thtrieu/darkflow/archive/master.zip

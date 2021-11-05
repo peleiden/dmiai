@@ -24,7 +24,7 @@ def yolo_predict(model, img: np.ndarray) -> None | tuple[int, int]:
 
 if __name__ == "__main__":
     from PIL import Image
-    m = setup_model()
+    m = setup_yolo_model()
     print(
         yolo_predict(m, np.array(Image.open("data/waldo/1_1_1.jpg")))
     )

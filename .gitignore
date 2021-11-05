@@ -1,3 +1,4 @@
+weights.h5
 frozen_inference_graph.pb
 yolov2-wally.pb
 data
