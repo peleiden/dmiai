@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from enum import Enum
 from functools import wraps
 from typing import Any, List
+from argparse import ArgumentParser
 import datetime
 import json
 import logging
@@ -18,9 +19,13 @@ from pelutils import log, DataStorage
 from pydantic import BaseModel
 import numpy as np
 
+
 import train
 
-PORT = 6971
+p = ArgumentParser()
+p.add_argument("--port", type=int, default=6971)
+
+PORT = p.parse_args().port
 TRAIN = True
 
 start_time = time.time()
@@ -99,8 +104,8 @@ def predict_train():
     action = model.predict(state)
     # log("Making action %s" % action)
     episode_actions.append(action)
-
     episode_states.append(state)
+
     if state.did_crash:
         episode = [
             train.Experience(
@@ -122,9 +127,10 @@ def predict_train():
             with open("model-%s.pkl" % PORT, "wb") as f:
                 pickle.dump(model, f)
             train_data.save("autobahn-training-%s" % PORT)
+    #log(", ".join(f"{o.obstacle_type}[{round(o.distance)}@{round(o.angle/np.pi*180)}]" for o in train.identify_obstacles(state.sensors)))
 
     return PredictResponse(
-        action=action
+       action=action
     )
 
 if __name__ == "__main__":
