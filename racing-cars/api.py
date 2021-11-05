@@ -107,8 +107,13 @@ def predict_train():
     data = _get_data()
 
     state = train.State.from_dict(data)
-    action = model.predict(state)
-    # log("Making action %s" % action)
+    if not episode_actions:
+        action = train.ActionType.ACCELERATE
+    else:
+        model.eval()
+        action = model.predict(episode_states[-1], state)
+        if TRAIN:
+            model.train()
     episode_actions.append(action)
     episode_states.append(state)
 
