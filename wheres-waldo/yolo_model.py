@@ -4,7 +4,7 @@ import numpy as np
 import warnings
 warnings.filterwarnings('ignore')
 
-def setup_model():
+def setup_yolo_model():
     from darkflow.net.build import TFNet
     paths = {
         "pbLoad": "yolov2-wally.pb",

@@ -4,7 +4,7 @@ import numpy as np
 
 PATH = "frozen_inference_graph.pb"
 
-def setup_model():
+def setup_magajna_model():
     detection_graph = tf.Graph()
     with detection_graph.as_default():
         od_graph_def = tf.GraphDef()
