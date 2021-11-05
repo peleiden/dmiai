@@ -31,9 +31,9 @@ class Example:
 
     @staticmethod
     def from_review(tokenizer, review: Review) -> Example:
-        id_arr = torch.full((NUM_TOKENS+2,), fill_value=tokenizer.pad_token_id, dtype=torch.int32)
+        id_arr = torch.full((NUM_TOKENS,), fill_value=tokenizer.pad_token_id, dtype=torch.int32)
         ids = tokenizer.convert_tokens_to_ids(tokenizer.tokenize(review.review))
-        ids = ids[:NUM_TOKENS]
+        ids = ids[:NUM_TOKENS-2]
         id_arr[0] = tokenizer.cls_token_id
         id_arr[1:1+len(ids)] = torch.IntTensor(ids)
         id_arr[1+len(ids)] = tokenizer.sep_token_id
@@ -77,7 +77,7 @@ class ScorePredictor(nn.Module):
     def __init__(self, pretrained_model: nn.Module, bert_config: AutoConfig):
         super().__init__()
         self.pretrained_model = pretrained_model
-        self.regressor = nn.Linear(bert_config.hidden_size*(NUM_TOKENS+2), 1)
+        self.regressor = nn.Linear(bert_config.hidden_size*NUM_TOKENS, 1)
 
     def forward(self, batch: Batch) -> torch.FloatTensor:
         cwrs = self.pretrained_model(batch.ids, return_dict=True)["last_hidden_state"]
@@ -183,9 +183,6 @@ def run(location: str, model_name: str, batch_size: int, epochs: int, lr: float,
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     bert_config = AutoConfig.from_pretrained(model_name)
     tokenizer = AutoTokenizer.from_pretrained(model_name)
-    global NUM_TOKENS
-    if NUM_TOKENS is None:
-        NUM_TOKENS = tokenizer.model_max_length
     model = RobertaModel.from_pretrained(model_name)
     model = ScorePredictor(model, bert_config).to(device)
 
