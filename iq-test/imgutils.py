@@ -4,7 +4,7 @@ from skimage.filters import gaussian
 import cv2
 
 def similarity(img1: np.ndarray, img2: np.ndarray) -> float:
-    return structural_similarity(img1, img2)
+    return structural_similarity(img1, img2, multichannel=len(img1.shape)>2)
 
 def diff(img1: np.ndarray, img2: np.ndarray) -> np.ndarray:
     _, diff = structural_similarity(img1, img2, full=True, multichannel=(multichannel := len(img1.shape) > 2))
