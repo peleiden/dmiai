@@ -3,7 +3,11 @@ flask-restful
 flask-cors
 pydantic
 
+Pillow
+opencv-python
+scikit-image
 pelutils==0.6.9
+pandas
 transformers
 torch
 click>=7.1.2
