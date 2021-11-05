@@ -5,6 +5,7 @@ import json
 import time
 from io import BytesIO
 import numpy as np
+import typing
 
 from flask import Flask, request, jsonify
 from flask_restful import Api
@@ -15,6 +16,7 @@ from pydantic import BaseModel
 from PIL import Image
 
 from yolo_model import setup_model, yolo_predict
+
 
 model = setup_model()
 
@@ -33,7 +35,8 @@ def get_uptime() -> str:
 
 def _get_data():
     """ Returns the Waldo image """
-    return np.array(Image.open(BytesIO(request.file.read())).convert("RGB"))
+    f = request.files["request"].stream
+    return np.array(Image.open(f).convert("RGB"))
 
 def api_fun(func):
     @wraps(func)
@@ -60,6 +63,7 @@ def api():
 def predict():
     img = _get_data()
     x, y = yolo_predict(model, img)
+    print(x,y)
     return PredictResponse(x=x, y=y)
 
 if __name__ == "__main__":
