@@ -15,10 +15,11 @@ from pydantic import BaseModel
 
 from PIL import Image
 
-from yolo_model import setup_model, yolo_predict
+from yolo_model import setup_yolo_model, yolo_predict
+from magajna_model import setup_magajna_model, magajna_predict
 
-
-model = setup_model()
+yolo_model = setup_yolo_model()
+magajna_model = setup_magajna_model()
 
 start_time = time.time()
 
@@ -62,8 +63,9 @@ def api():
 @api_fun
 def predict():
     img = _get_data()
-    x, y = yolo_predict(model, img)
-    print(x,y)
+    x, y = yolo_predict(yolo_model, img)
+    #x, y = magajna_predict(magajna_model, img)
+    log(f"Predicted {x,y}")
     return PredictResponse(x=x, y=y)
 
 if __name__ == "__main__":
