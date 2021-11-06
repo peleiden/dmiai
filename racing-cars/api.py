@@ -172,7 +172,7 @@ def predict_train():
     if info.did_crash:
         episode = [
             train.Experience(
-                st, at, stt.info.distance-st.info.distance, stt,
+                st, at, (stt.info.distance-st.info.distance)/s.LENGTH, stt,
             ) for st, at, stt in zip(episode_states[:-1], episode_actions[:-1], episode_states[1:])
         ]
         log("Updating using %i experiences" % len(episode))
