@@ -79,7 +79,7 @@ class HighestSimilarity(IQModel):
 
 class ConsistentTransformations(IQModel):
     def __init__(self):
-        self.consistency_threshold = 1
+        self.consistency_threshold = 1.10
         self.angles = np.arange(1, 8) * 45
         self.transformation_library = dict()
         for a in self.angles:
@@ -119,6 +119,7 @@ class ConsistentTransformations(IQModel):
             print(name, example_consistensies)
             if sum(c > self.consistency_threshold for c in example_consistensies) > 2:
                 choice_consistensies = [self.consistency([*test_imgs, c], fun) for c in choice_imgs]
+                print(choice_consistensies)
                 if any(c > self.consistency_threshold for c in choice_consistensies):
                     print(name)
                     return np.argmax(choice_consistensies)
