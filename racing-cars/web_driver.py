@@ -3,6 +3,10 @@ import sys
 import time
 
 from selenium import webdriver
+import warnings
+warnings.filterwarnings("ignore")
+
+import logging
 
 SERVICE = "https://api.dmiai.dk/racing-game"
 HOST = "127.0.0.1"
