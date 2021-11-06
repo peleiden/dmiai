@@ -16,7 +16,7 @@ from pydantic import BaseModel
 from PIL import Image
 
 
-from model import ConsistentTransformations
+from model import ConsistentTransformations, HighestSimilarity
 
 start_time = time.time()
 model = ConsistentTransformations()
