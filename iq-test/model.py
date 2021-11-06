@@ -52,18 +52,19 @@ class UniformDifferences(IQModel):
             scores.append(self.scorer(similis))
         return np.argmax(scores)
 
-class HighestSimilarity(IQModel):
-    bins = 10
+def hist(img: np.ndarray, bins: int):
+    return np.histogram(img, bins=bins, range=(0, 1))[0]
 
-    def hist(self, img: np.ndarray):
-        return np.histogram(img, bins=self.bins, range=(0, 1))[0]
+
+class HighestSimilarity(IQModel):
+    bins = 5
 
     def predict(self, rule_img: np.ndarray, choice_imgs: list[np.ndarray]) -> int:
         examples, test_imgs, choice_imgs = self.receive(rule_img, choice_imgs)
         test_imgs = [rgb2hsv(t) for t in test_imgs]
         choice_imgs = [rgb2hsv(c) for c in choice_imgs]
-        test_dists = [self.hist(t[:, :, 0]) for t in test_imgs]
-        choice_dists = [self.hist(c[:, :, 0]) for c in choice_imgs]
+        test_dists = [hist(t[:, :, 0], self.bins) for t in test_imgs]
+        choice_dists = [hist(c[:, :, 0], self.bins) for c in choice_imgs]
 
         options = dict(choice=list(), test=list(), mse=list())
         for i, c in enumerate(choice_dists):
@@ -76,6 +77,45 @@ class HighestSimilarity(IQModel):
         options = pd.DataFrame(options)
         mean_mses = options.groupby("choice").mean()
         return mean_mses.mse.argmin()
+
+class SimilarDiffs(IQModel):
+    bins = 5
+
+    def predict(self, rule_img: np.ndarray, choice_imgs: list[np.ndarray]) -> int:
+        examples, test_imgs, choice_imgs = self.receive(rule_img, choice_imgs)
+        test_imgs = [rgb2hsv(t) for t in test_imgs]
+        choice_imgs = [rgb2hsv(c) for c in choice_imgs]
+        ex_imgs = [[rgb2hsv(e) for e in ex] for ex in examples]
+
+        test_dists = [hist(t[:, :, 0], self.bins) for t in test_imgs]
+        choice_dists = [hist(c[:, :, 0], self.bins) for c in choice_imgs]
+        ex_dists = [[hist(e[:, :, 0], self.bins) for e in ex] for ex in ex_imgs]
+
+        first_mses, second_mses = list(), list()
+        for ex_d in ex_dists:
+            first_mses.append(
+                ((ex_d[0]-ex_d[1])**2).mean()
+            )
+            second_mses.append(
+                ((ex_d[1]-ex_d[2])**2).mean()
+            )
+
+        options = dict(choice=list(), mse1=list(), mse2=list())
+        for i, c in enumerate(choice_dists):
+            options["choice"].append(i)
+            options["mse1"].append(
+                ((c - test_dists[0])**2).mean()
+            )
+            options["mse2"].append(
+                ((c - test_dists[1])**2).mean()
+            )
+
+        options["mse1diff"] = abs(options["mse1"] - np.mean(first_mses))
+        options["mse2diff"] = abs(options["mse2"] - np.mean(second_mses))
+        options["weighteddiff"] = options["mse1diff"] + options["mse2diff"]
+
+        options = pd.DataFrame(options)
+        return options.weighteddiff.argmin()
 
 class ConsistentTransformations(IQModel):
     def __init__(self):
@@ -130,6 +170,9 @@ if __name__ == "__main__":
 
     img = np.array(Image.open("data/test18.jpeg"))
     choice_imgs = [np.array(Image.open(f"data/choices18-{i}.jpeg")) for i in range(4)]
+    img = np.array(Image.open("/home/sorenwh/Hentet/iq-imgs/iq-6-0.jpg"))
+    choice_imgs = [np.array(Image.open(f"/home/sorenwh/Hentet/iq-imgs/iq-6-{i+1}.jpg")) for i in range(4)]
+
     #print(UniformDifferences().predict(img, choice_imgs))
-    #print(HighestSimilarity().predict(img, choice_imgs))
-    print(ConsistentTransformations().predict(img, choice_imgs))
+    print(SimilarDiffs().predict(img, choice_imgs))
+    #print(ConsistentTransformations().predict(img, choice_imgs))

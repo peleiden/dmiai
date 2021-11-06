@@ -15,12 +15,11 @@ from pydantic import BaseModel
 
 from PIL import Image
 
-
-from model import ConsistentTransformations, HighestSimilarity
+from model import ConsistentTransformations, SimilarDiffs
 
 start_time = time.time()
 model = ConsistentTransformations()
-model2 = HighestSimilarity()
+model2 = SimilarDiffs()
 
 app = Flask(__name__)
 Api(app)
@@ -74,8 +73,8 @@ def predict():
 
     idx = model.predict(rule_img, choice_imgs)
     if idx is None:
-        idx = np.random.randint(4)
-#        idx = model2.predict(rule_img, choice_imgs)
+        idx = model2.predict(rule_img, choice_imgs)
+        #idx = np.random.randint(4)
 
     log(f"Predicted {idx}")
 
