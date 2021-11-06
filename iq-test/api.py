@@ -74,7 +74,8 @@ def predict():
 
     idx = model.predict(rule_img, choice_imgs)
     if idx is None:
-        idx = model2.predict(rule_img, choice_imgs)
+        idx = np.random.randint(4)
+#        idx = model2.predict(rule_img, choice_imgs)
 
     log(f"Predicted {idx}")
 
