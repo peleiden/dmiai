@@ -17,9 +17,9 @@ class Data(DataStorage):
     velocity_x: list[float]
     velocity_y: list[float]
     car1pos_x: list[float]
-    car1pos_y: list[float]
+    car1lane: list[float]
     car2pos_x: list[float]
-    car2pos_y: list[float]
+    car2lane: list[float]
     car1vel: list[float]
     car2vel: list[float]
     infos: list
@@ -45,6 +45,10 @@ WIDTH = 425 + 450
 GRID_SIZE = 5
 assert WIDTH % GRID_SIZE == 0 and LENGTH % GRID_SIZE == 0
 
+FEATURES = 13
+ALL_ACTIONS = tuple(a for a in ActionType)
+ACTIONS = len(ALL_ACTIONS)
+
 def pos_to_lane(y: float) -> Literal[0, 1, 2]:
     if y <= 280:
         return 0
@@ -52,8 +56,14 @@ def pos_to_lane(y: float) -> Literal[0, 1, 2]:
         return 1
     return 2
 
-def lane_to_pos(lane: Literal[0, 1, 2]) -> float:
+def lane_to_pos(lane: Literal[0, 1, 2], driver=False) -> float:
+    # if driver:
+    #     return { 0: 130+CAR_WIDTH/2-10, 1: 425, 2: 713-CAR_WIDTH/2+15 }[lane]
     return { 0: 130, 1: 425, 2: 733 }[lane]
+
+@dataclass
+class Feature:
+    pass
 
 @dataclass
 class Vector:
@@ -62,8 +72,9 @@ class Vector:
 
 @dataclass
 class Car:
-    velocity: float   # In forward direction
-    position: Vector  # Center of car. (0, 0) is where our car stars
+    position: float  # Center of car on x axis
+    velocity: float  # In forward direction
+    lane: int
 
 @dataclass
 class Sensors:
@@ -114,21 +125,8 @@ class State:
 
         # Calculate y position
         # There will always be at least one sensor pointing on a wall
-        est_y = self.position + info.velocity.y
-        lane = pos_to_lane(est_y)
-        # If in lane 0 or 2, either the left or right side sensors will point to a wall
-        if lane == 0:
-            new_state.position = info.sensors.left_side
-        elif lane == 2:
-            new_state.position = WIDTH - info.sensors.right_side
-        else:
-            # Car is in middle lane, so we can assume no None readings
-            # Allow small difference in case of floating point rounding differences
-            if abs(info.sensors.left_back-info.sensors.left_front) < 1:
-                new_state.position = max(info.sensors.left_back, info.sensors.left_front) * sqrt(0.5)
-            else:
-                new_state.position = WIDTH - max(info.sensors.right_back, info.sensors.right_front) * sqrt(0.5)
-
+        new_state.position = self.position + info.velocity.y
+        lane = pos_to_lane(new_state.position)
         # Update cars velocity
         new_state.velocity = info.velocity
 
@@ -141,10 +139,10 @@ class State:
             car.velocity -= new_state.velocity.x - self.velocity.x
 
             # Then update estimated position
-            car.position.x += car.velocity
+            car.position += car.velocity
 
             # If car is too far away, pop from state
-            if abs(car.position.x) > SENSOR_DIST:
+            if abs(car.position) > SENSOR_DIST:
                 new_state.cars.pop(i)
 
         # Check for new cars
@@ -188,7 +186,7 @@ class State:
                         # In that case, we pop the existing car
                         old_car = None
                         for j, car in enumerate(new_state.cars):
-                            if carlane == pos_to_lane(car.position.y):
+                            if carlane == car.lane:
                                 old_car = new_state.cars.pop(j)
                                 break
                         # Calculate its x position and velocity
@@ -210,9 +208,9 @@ class State:
                         else:
                             x_reading -= CAR_LENGTH / 2
 
-                        new_car = Car(velocity, Vector(x_reading, lane_to_pos(carlane)))
+                        new_car = Car(x_reading, velocity, carlane)
                         if old_car:
-                            if abs(old_car.position.x - new_car.position.x) > 150:
+                            if abs(old_car.position - new_car.position) > 150:
                                 # Definitely a new car
                                 new_state.cars.append(new_car)
                             else:
@@ -264,22 +262,5 @@ class State:
         return grid, velocities
 
     @property
-    def features(self) -> torch.FloatTensor:
-        lane_cars = [0, 0, 0]
-        lane_positions = [0, 0, 0]
-        lane_velocities = [0, 0, 0]
-        for car in self.cars:
-            lane = pos_to_lane(car.position.y)
-            lane_cars[lane] = 1
-            lane_positions[lane] = car.position.x / LENGTH
-            lane_velocities[lane] = car.velocity / LENGTH
-        return torch.FloatTensor([
-            (self.position - CAR_WIDTH / 2) / WIDTH,
-            (WIDTH - self.position - CAR_WIDTH / 2) / WIDTH,
-            self.velocity.x/LENGTH,
-            self.velocity.y/WIDTH,
-            *lane_cars,
-            *lane_positions,
-            *lane_velocities,
-        ])
-
+    def lane(self):
+        return pos_to_lane(self.position)

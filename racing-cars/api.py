@@ -1,5 +1,5 @@
 from __future__ import annotations
-import subprocess
+from collections import deque
 from dataclasses import dataclass
 from functools import wraps
 from typing import Any
@@ -11,6 +11,7 @@ import os
 import pickle
 import pprint
 import shutil
+import subprocess
 import time
 log = logging.getLogger('werkzeug')
 log.setLevel(logging.ERROR)
@@ -21,10 +22,10 @@ from flask_cors import CORS
 from pelutils import log, DataStorage
 from pydantic import BaseModel
 
-import train
 import matplotlib.pyplot as plt
 import numpy as np
 
+from model import predict
 import state as s
 
 
@@ -46,11 +47,6 @@ app = Flask(__name__)
 Api(app)
 CORS(app)
 
-if TRAIN:
-    model = train.DeepQ(train=True)
-else:
-    with open("model-%s.pkl" % PORT) as f:
-        model = pickle.load(f)
 episode_actions = list()
 episode_states = list()
 
@@ -103,7 +99,7 @@ def api():
 
 @app.route("/api/predict_", methods=["POST"])
 @api_fun
-def predict():
+def predict_():
     # actions = [train.ActionType.ACCELERATE, train.ActionType.DECELERATE,
     #     train.ActionType.STEER_LEFT, train.ActionType.STEER_RIGHT,
     #     train.ActionType.NOTHING]
@@ -129,13 +125,15 @@ def _plot_grid(n, action: s.ActionType, grid: np.ndarray, velocities: np.ndarray
     # if len(episode_actions) % 10 == 0 or info.did_crash:
     #     _plot_grid(len(episode_actions)-1, action, grid, velocities)
     #     dat.save("episode-%i" % episode_number)
+init = True
 dat: s.Data
 episode_number = -1
 state: s.State
+action_queue: deque[s.ActionType] = deque([])
 @app.route("/api/predict", methods=["POST"])
 @api_fun
 def predict_train():
-    global episode_actions, episode_states, model, num_episodes, prev_info, state, episode_number, dat
+    global episode_actions, episode_states, model, num_episodes, prev_info, state, episode_number, dat, action_queue, init
     data = _get_data()
     if episode_number == -1:
         episode_number = 0
@@ -143,53 +141,37 @@ def predict_train():
 
     info = s.Information.from_dict(data)
 
-    if not episode_actions:
+    if init:
         dat = s.Data([],[],[],[],[],[],[],[],[],[],[])
         state = s.State(0, s.Vector(0., 0.), 425, list(), info)
         action = s.ActionType.ACCELERATE
+        action_queue = deque([])
+        init = False
+    elif action_queue:  # And check that action queue should not be updated
+        state = state.new_state(info)
+        action = action_queue.popleft()
     else:
         state = state.new_state(info)
-        model.eval()
-        action = model.predict(state)
-        if TRAIN:
-            model.train()
+        action_queue.extend(predict(state))
+        action = action_queue.popleft()
+    
+    time.sleep(1)
 
-    episode_actions.append(action)
-    episode_states.append(state)
-
-    # dat.dt.append(state.dt)
-    # dat.position.append(state.position)
-    # dat.velocity_x.append(state.velocity.x)
-    # dat.velocity_y.append(state.velocity.y)
-    # dat.car1pos_x.append(state.cars[0].position.x if state.cars else None)
-    # dat.car1pos_y.append(state.cars[0].position.y if state.cars else None)
-    # dat.car2pos_x.append(state.cars[1].position.x if len(state.cars) > 1 else None)
-    # dat.car2pos_y.append(state.cars[1].position.y if len(state.cars) > 1 else None)
-    # dat.car1vel.append(state.cars[0].velocity if state.cars else None)
-    # dat.car2vel.append(state.cars[1].velocity if len(state.cars) > 2 else None)
-    # dat.infos.append(info)
+    dat.dt.append(state.dt)
+    dat.position.append(state.position)
+    dat.velocity_x.append(state.velocity.x)
+    dat.velocity_y.append(state.velocity.y)
+    dat.car1pos_x.append(state.cars[0].position if state.cars else None)
+    dat.car1lane.append(state.cars[0].lane if state.cars else None)
+    dat.car2pos_x.append(state.cars[1].position if len(state.cars) > 1 else None)
+    dat.car2lane.append(state.cars[1].lane if len(state.cars) > 1 else None)
+    dat.car1vel.append(state.cars[0].velocity if state.cars else None)
+    dat.car2vel.append(state.cars[1].velocity if len(state.cars) > 2 else None)
+    dat.infos.append(info)
 
     if info.did_crash:
-        episode = [
-            train.Experience(
-                st, at, (stt.info.distance-st.info.distance)/s.LENGTH, stt,
-            ) for st, at, stt in zip(episode_states[:-1], episode_actions[:-1], episode_states[1:])
-        ]
-        log("Updating using %i experiences" % len(episode))
-        if TRAIN:
-            loss, tr = model.update(episode)
-            train_data.loss.append(loss)
-            train_data.rewards.append(tr)
-            train_data.dist.append(episode[-1].stt.info.distance)
-            train_data.timesteps.append(len(episode_actions)+1)
-        episode_states = list()
-        episode_actions = list()
-        episode_number += 1
-        if episode_number % 10 == 0 and TRAIN:
-            log("Saving data")
-            with open("model-%s.pkl" % PORT, "wb") as f:
-                pickle.dump(model, f)
-            train_data.save("autobahn-training-%s" % PORT)
+        dat.save("episode-%i" % episode_number)
+        init = True
 
     return PredictResponse(action=action)
 
