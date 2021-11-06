@@ -22,6 +22,7 @@ from pelutils import log, DataStorage
 from pydantic import BaseModel
 
 import train
+import model as symbolic_model
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -149,47 +150,17 @@ def predict_train():
         action = s.ActionType.ACCELERATE
     else:
         state = state.new_state(info)
-        model.eval()
-        action = model.predict(state)
-        if TRAIN:
-            model.train()
+        action = symbolic_model.act(state)
+        print(action)
 
     episode_actions.append(action)
     episode_states.append(state)
 
-    # dat.dt.append(state.dt)
-    # dat.position.append(state.position)
-    # dat.velocity_x.append(state.velocity.x)
-    # dat.velocity_y.append(state.velocity.y)
-    # dat.car1pos_x.append(state.cars[0].position.x if state.cars else None)
-    # dat.car1pos_y.append(state.cars[0].position.y if state.cars else None)
-    # dat.car2pos_x.append(state.cars[1].position.x if len(state.cars) > 1 else None)
-    # dat.car2pos_y.append(state.cars[1].position.y if len(state.cars) > 1 else None)
-    # dat.car1vel.append(state.cars[0].velocity if state.cars else None)
-    # dat.car2vel.append(state.cars[1].velocity if len(state.cars) > 2 else None)
-    # dat.infos.append(info)
-
     if info.did_crash:
-        episode = [
-            train.Experience(
-                st, at, (stt.info.distance-st.info.distance)/s.LENGTH, stt,
-            ) for st, at, stt in zip(episode_states[:-1], episode_actions[:-1], episode_states[1:])
-        ]
-        log("Updating using %i experiences" % len(episode))
-        if TRAIN:
-            loss, tr = model.update(episode)
-            train_data.loss.append(loss)
-            train_data.rewards.append(tr)
-            train_data.dist.append(episode[-1].stt.info.distance)
-            train_data.timesteps.append(len(episode_actions)+1)
         episode_states = list()
         episode_actions = list()
         episode_number += 1
-        if episode_number % 10 == 0 and TRAIN:
-            log("Saving data")
-            with open("model-%s.pkl" % PORT, "wb") as f:
-                pickle.dump(model, f)
-            train_data.save("autobahn-training-%s" % PORT)
+        log(f"Distance acquired: {state.info.distance}")
 
     return PredictResponse(action=action)
 
