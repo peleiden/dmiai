@@ -10,6 +10,12 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+import state
+
+
+# One hot encode y position of other cars
+# Give velocities by lane
+
 WIDTH = 425+450
 CAR_WIDTH = 425-200.75
 MARGIN = 10
@@ -94,12 +100,12 @@ class State:
 
 @dataclass
 class Experience:
-    st: State
+    st: state.State
     at: ActionType
     rt: float
-    stt: State
+    stt: state.State
 
-FEATURES = 8 * 2  # Current and previous state, each of which have eight features
+FEATURES = 13
 ALL_ACTIONS = tuple(a for a in ActionType)
 ACTIONS = len(ALL_ACTIONS)
 
@@ -117,22 +123,18 @@ class Model(ABC):
         pass
 
 class _DeepModel(nn.Module):
-    def __init__(self, n_hidden=64):
+    def __init__(self, n_hidden=256):
         super().__init__()
         self.hidden = n_hidden
         self.activation = F.gelu
-        self.bnorm1 = nn.BatchNorm1d(FEATURES)
-        self.bnorm2 = nn.BatchNorm1d(n_hidden)
         self.dropout = nn.Dropout(p=0.05)
         self.linear1 = nn.Linear(FEATURES, self.hidden)
         self.linear2 = nn.Linear(self.hidden, ACTIONS)
 
     def forward(self, x: torch.FloatTensor):
-        x = self.bnorm1(x)
         x = self.linear1(x)
         x = self.dropout(x)
         x = self.activation(x)
-        x = self.bnorm2(x)
         x = self.linear2(x)
         return x.squeeze()
 
@@ -167,30 +169,28 @@ class DeepQ(Model):
     def _Qp(self, features: torch.FloatTensor) -> torch.FloatTensor:
         return self.target_network(features)
 
-    def _predict(self, *states: State) -> int:
+    def _predict(self, state: state.State) -> int:
         if random.random() < self.eps:
             return random.randint(0, ACTIONS-1)
         with torch.no_grad():
-            return torch.argmax(self._Q(torch.cat([s.features for s in states]).unsqueeze(0))[0]).item()
+            return torch.argmax(self._Q(state.features.unsqueeze(0))[0]).item()
 
-    def predict(self, *states: State) -> ActionType:
+    def predict(self, state: state.State) -> ActionType:
         if self._train:
-            return ALL_ACTIONS[self._predict(*states)]
+            return ALL_ACTIONS[self._predict(state)]
         with torch.no_grad:
-            return ALL_ACTIONS[torch.argmax(self._Q(torch.cat([s.features for s in states]))[0]).item().unsqueeze(0)]
+            return ALL_ACTIONS[torch.argmax(self._Q(state.features.unsqueeze(0))[0])]
 
     def update(self, episode: list[Experience]):
         # Features consist of current and previous state to model velocity
-        features_old = torch.stack([exp.st.features for exp in episode])
-        features_new = torch.stack([exp.stt.features for exp in episode])
-        x = torch.hstack((features_old, features_new)).float()
-        rewards = torch.FloatTensor([exp.rt for exp in episode])[1:]
+        x = torch.vstack([ex.st.features for ex in episode] + [episode[-1].stt.features])
+        rewards = torch.FloatTensor([exp.rt for exp in episode])
         tr = rewards.sum().item()
-        actions = torch.LongTensor([ALL_ACTIONS.index(exp.at) for exp in episode])[1:]
+        actions = torch.LongTensor([ALL_ACTIONS.index(exp.at) for exp in episode])
         # breakpoint()
         with torch.no_grad():
             Qp, _ = self._Qp(x[1:]).max(dim=1)
-        Q = self._Q(x[:-1])[torch.arange(len(episode)-1), actions]
+        Q = self._Q(x[:-1])[torch.arange(len(episode)), actions]
         loss = torch.sum((rewards + self.gamma * Qp - Q) ** 2)
         log("Episode length: %i, total reward: %.4f" % (len(episode), tr))
         loss.backward()
