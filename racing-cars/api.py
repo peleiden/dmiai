@@ -7,7 +7,7 @@ from argparse import ArgumentParser
 import datetime
 import json
 import logging
-import pickle
+import pprint
 import time
 log = logging.getLogger('werkzeug')
 log.setLevel(logging.ERROR)
@@ -19,6 +19,9 @@ from pelutils import log, DataStorage
 from pydantic import BaseModel
 
 import train
+import numpy as np
+
+import state as s
 
 p = ArgumentParser()
 p.add_argument("--port", type=int, default=6971)
@@ -35,11 +38,11 @@ app = Flask(__name__)
 Api(app)
 CORS(app)
 
-if TRAIN:
-    model = train.DeepQ(train=True)
-else:
-    with open("model-%s.pkl" % PORT) as f:
-        model = pickle.load(f)
+# if TRAIN:
+#     model = train.DeepQ(train=True)
+# else:
+#     with open("model-%s.pkl" % PORT) as f:
+#         model = pickle.load(f)
 num_episodes = 0
 episode_actions = list()
 episode_states = list()
@@ -58,7 +61,7 @@ class Data(DataStorage):
 train_data = Data([], [], [], [])
 
 class PredictResponse(BaseModel):
-    action: train.ActionType
+    action: s.ActionType
 
 def get_uptime() -> str:
     return '{}'.format(datetime.timedelta(seconds=time.time() - start_time))
@@ -100,49 +103,58 @@ def predict():
     # return PredictResponse(action=train.ActionType.ACCELERATE)
     pass
 
+state: s.State
 @app.route("/api/predict", methods=["POST"])
 @api_fun
 def predict_train():
-    global episode_actions, episode_states, model, num_episodes
+    global episode_actions, episode_states, model, num_episodes, prev_info, state
     data = _get_data()
 
-    state = train.State.from_dict(data)
+    info = s.Information.from_dict(data)
+    episode_states
     if not episode_actions:
-        action = train.ActionType.ACCELERATE
+        state = s.State(s.Vector(0., 0.), 425, list(), info)
+        action = s.ActionType.ACCELERATE
+        episode_actions.append(action)
     else:
-        model.eval()
-        action = model.predict(episode_states[-1], state)
-        if TRAIN:
-            model.train()
-    episode_actions.append(action)
-    episode_states.append(state)
+        action = s.ActionType.NOTHING
+        state = state.new_state(info)
+        log(pprint.pformat(s.to_dict(state)))
+    if info.did_crash:
+        episode_actions.clear()
+    prev_info = info
+    # else:
+    #     model.eval()
+    #     action = model.predict(episode_states[-1], state)
+    #     if TRAIN:
+    #         model.train()
+    # episode_actions.append(action)
+    # episode_states.append(state)
 
-    if state.did_crash:
-        episode = [
-            train.Experience(
-                st, at, stt.distance-st.distance, stt,
-            ) for st, at, stt in zip(episode_states[:-1], episode_actions[:-1], episode_states[1:])
-        ]
-        log("Updating using %i experiences" % len(episode))
-        if TRAIN:
-            loss, tr = model.update(episode)
-            train_data.loss.append(loss)
-            train_data.rewards.append(tr)
-            train_data.dist.append(episode[-1].stt.distance)
-            train_data.timesteps.append(len(episode_actions)+1)
-        episode_states = list()
-        episode_actions = list()
-        num_episodes += 1
-        if num_episodes % 100 == 0 and TRAIN:
-            log("Saving data")
-            with open("model-%s.pkl" % PORT, "wb") as f:
-                pickle.dump(model, f)
-            train_data.save("autobahn-training-%s" % PORT)
+    # if state.did_crash:
+    #     episode = [
+    #         train.Experience(
+    #             st, at, stt.distance-st.distance, stt,
+    #         ) for st, at, stt in zip(episode_states[:-1], episode_actions[:-1], episode_states[1:])
+    #     ]
+    #     log("Updating using %i experiences" % len(episode))
+    #     if TRAIN:
+    #         loss, tr = model.update(episode)
+    #         train_data.loss.append(loss)
+    #         train_data.rewards.append(tr)
+    #         train_data.dist.append(episode[-1].stt.distance)
+    #         train_data.timesteps.append(len(episode_actions)+1)
+    #     episode_states = list()
+    #     episode_actions = list()
+    #     num_episodes += 1
+    #     if num_episodes % 100 == 0 and TRAIN:
+    #         log("Saving data")
+    #         with open("model-%s.pkl" % PORT, "wb") as f:
+    #             pickle.dump(model, f)
+    #         train_data.save("autobahn-training-%s" % PORT)
     #log(", ".join(f"{o.obstacle_type}[{round(o.distance)}@{round(o.angle/np.pi*180)}]" for o in train.identify_obstacles(state.sensors)))
 
-    return PredictResponse(
-       action=action
-    )
+    return PredictResponse(action=action)
 
 if __name__ == "__main__":
     log.configure(
