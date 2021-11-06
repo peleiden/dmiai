@@ -7,7 +7,10 @@ from argparse import ArgumentParser
 import datetime
 import json
 import logging
+import os
+import pickle
 import pprint
+import shutil
 import time
 log = logging.getLogger('werkzeug')
 log.setLevel(logging.ERROR)
@@ -19,9 +22,11 @@ from pelutils import log, DataStorage
 from pydantic import BaseModel
 
 import train
+import matplotlib.pyplot as plt
 import numpy as np
 
 import state as s
+
 
 p = ArgumentParser()
 p.add_argument("--port", type=int, default=6971)
@@ -32,18 +37,20 @@ a = p.parse_args()
 
 PORT = a.port
 TRAIN = not a.no_train
+# imdir = "grids"
+# shutil.rmtree(imdir)
+# os.makedirs(imdir)
 
 start_time = time.time()
 app = Flask(__name__)
 Api(app)
 CORS(app)
 
-# if TRAIN:
-#     model = train.DeepQ(train=True)
-# else:
-#     with open("model-%s.pkl" % PORT) as f:
-#         model = pickle.load(f)
-num_episodes = 0
+if TRAIN:
+    model = train.DeepQ(train=True)
+else:
+    with open("model-%s.pkl" % PORT) as f:
+        model = pickle.load(f)
 episode_actions = list()
 episode_states = list()
 
@@ -103,56 +110,86 @@ def predict():
     # return PredictResponse(action=train.ActionType.ACCELERATE)
     pass
 
+def _plot_grid(n, action: s.ActionType, grid: np.ndarray, velocities: np.ndarray):
+    grid = grid.copy()
+    grid *= 255
+    # breakpoint()
+    grid[(grid==0).all(axis=2)] = 255
+    plt.figure(figsize=(20/2, 8.75/2))
+    plt.imshow(grid)
+    plt.title(action + "\n" + str(velocities.tolist()))
+    savedir = os.path.join(imdir, "episode-%i" % episode_number)
+    os.makedirs(savedir, exist_ok=True)
+    plt.savefig(os.path.join(savedir, "state-%i" % n))
+    plt.close()
+
+
+
+# grid, velocities = state.grid_representation()
+    # if len(episode_actions) % 10 == 0 or info.did_crash:
+    #     _plot_grid(len(episode_actions)-1, action, grid, velocities)
+    #     dat.save("episode-%i" % episode_number)
+dat: s.Data
+episode_number = -1
 state: s.State
 @app.route("/api/predict", methods=["POST"])
 @api_fun
 def predict_train():
-    global episode_actions, episode_states, model, num_episodes, prev_info, state
+    global episode_actions, episode_states, model, num_episodes, prev_info, state, episode_number, dat
     data = _get_data()
+    if episode_number == -1:
+        episode_number = 0
+        return PredictResponse(action=s.ActionType.NOTHING)
 
     info = s.Information.from_dict(data)
-    episode_states
-    if not episode_actions:
-        state = s.State(s.Vector(0., 0.), 425, list(), info)
-        action = s.ActionType.ACCELERATE
-        episode_actions.append(action)
-    else:
-        action = s.ActionType.NOTHING
-        state = state.new_state(info)
-        log(pprint.pformat(s.to_dict(state)))
-    if info.did_crash:
-        episode_actions.clear()
-    prev_info = info
-    # else:
-    #     model.eval()
-    #     action = model.predict(episode_states[-1], state)
-    #     if TRAIN:
-    #         model.train()
-    # episode_actions.append(action)
-    # episode_states.append(state)
 
-    # if state.did_crash:
-    #     episode = [
-    #         train.Experience(
-    #             st, at, stt.distance-st.distance, stt,
-    #         ) for st, at, stt in zip(episode_states[:-1], episode_actions[:-1], episode_states[1:])
-    #     ]
-    #     log("Updating using %i experiences" % len(episode))
-    #     if TRAIN:
-    #         loss, tr = model.update(episode)
-    #         train_data.loss.append(loss)
-    #         train_data.rewards.append(tr)
-    #         train_data.dist.append(episode[-1].stt.distance)
-    #         train_data.timesteps.append(len(episode_actions)+1)
-    #     episode_states = list()
-    #     episode_actions = list()
-    #     num_episodes += 1
-    #     if num_episodes % 100 == 0 and TRAIN:
-    #         log("Saving data")
-    #         with open("model-%s.pkl" % PORT, "wb") as f:
-    #             pickle.dump(model, f)
-    #         train_data.save("autobahn-training-%s" % PORT)
-    #log(", ".join(f"{o.obstacle_type}[{round(o.distance)}@{round(o.angle/np.pi*180)}]" for o in train.identify_obstacles(state.sensors)))
+    if not episode_actions:
+        dat = s.Data([],[],[],[],[],[],[],[],[],[],[])
+        state = s.State(0, s.Vector(0., 0.), 425, list(), info)
+        action = s.ActionType.ACCELERATE
+    else:
+        state = state.new_state(info)
+        model.eval()
+        action = model.predict(state)
+        if TRAIN:
+            model.train()
+
+    episode_actions.append(action)
+    episode_states.append(state)
+
+    # dat.dt.append(state.dt)
+    # dat.position.append(state.position)
+    # dat.velocity_x.append(state.velocity.x)
+    # dat.velocity_y.append(state.velocity.y)
+    # dat.car1pos_x.append(state.cars[0].position.x if state.cars else None)
+    # dat.car1pos_y.append(state.cars[0].position.y if state.cars else None)
+    # dat.car2pos_x.append(state.cars[1].position.x if len(state.cars) > 1 else None)
+    # dat.car2pos_y.append(state.cars[1].position.y if len(state.cars) > 1 else None)
+    # dat.car1vel.append(state.cars[0].velocity if state.cars else None)
+    # dat.car2vel.append(state.cars[1].velocity if len(state.cars) > 2 else None)
+    # dat.infos.append(info)
+
+    if info.did_crash:
+        episode = [
+            train.Experience(
+                st, at, stt.info.distance-st.info.distance, stt,
+            ) for st, at, stt in zip(episode_states[:-1], episode_actions[:-1], episode_states[1:])
+        ]
+        log("Updating using %i experiences" % len(episode))
+        if TRAIN:
+            loss, tr = model.update(episode)
+            train_data.loss.append(loss)
+            train_data.rewards.append(tr)
+            train_data.dist.append(episode[-1].stt.info.distance)
+            train_data.timesteps.append(len(episode_actions)+1)
+        episode_states = list()
+        episode_actions = list()
+        episode_number += 1
+        if episode_number % 10 == 0 and TRAIN:
+            log("Saving data")
+            with open("model-%s.pkl" % PORT, "wb") as f:
+                pickle.dump(model, f)
+            train_data.save("autobahn-training-%s" % PORT)
 
     return PredictResponse(action=action)
 

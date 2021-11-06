@@ -2,8 +2,27 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import dataclass
 from enum import Enum
-from math import sqrt
+from math import ceil, sqrt
 from typing import Literal
+
+from pelutils import DataStorage
+import numpy as np
+import torch
+
+
+@dataclass
+class Data(DataStorage):
+    dt: list[float]
+    position: list[float]
+    velocity_x: list[float]
+    velocity_y: list[float]
+    car1pos_x: list[float]
+    car1pos_y: list[float]
+    car2pos_x: list[float]
+    car2pos_y: list[float]
+    car1vel: list[float]
+    car2vel: list[float]
+    infos: list
 
 def to_dict(obj) -> dict:
     if hasattr(obj, "__dict__"):
@@ -12,18 +31,19 @@ def to_dict(obj) -> dict:
         return obj
 
 class ActionType(str, Enum):
-    ACCELERATE = 'ACCELERATE'
-    DECELERATE = 'DECELERATE'
+    ACCELERATE  = 'ACCELERATE'
+    DECELERATE  = 'DECELERATE'
     STEER_RIGHT = 'STEER_RIGHT'
-    STEER_LEFT = 'STEER_LEFT'
-    NOTHING = 'NOTHING'
+    STEER_LEFT  = 'STEER_LEFT'
+    NOTHING     = 'NOTHING'
 
-FEATURES = 8 * 2  # Current and previous state, each of which have eight features
-ALL_ACTIONS = tuple(a for a in ActionType)
-
+CAR_LENGTH = 2 * 197.834228515625
+CAR_WIDTH = CAR_LENGTH * 397 / 800
+SENSOR_DIST = 1000 + CAR_WIDTH / 2
+LENGTH = 2000
 WIDTH = 425 + 450
-CAR_WIDTH = 425 - 200.75
-SENSOR_DIST = 1020  # Should be 1000, but add a little just in case
+GRID_SIZE = 5
+assert WIDTH % GRID_SIZE == 0 and LENGTH % GRID_SIZE == 0
 
 def pos_to_lane(y: float) -> Literal[0, 1, 2]:
     if y <= 280:
@@ -33,7 +53,7 @@ def pos_to_lane(y: float) -> Literal[0, 1, 2]:
     return 2
 
 def lane_to_pos(lane: Literal[0, 1, 2]) -> float:
-    return { 0: 130, 1: 450, 2: 733 }[lane]
+    return { 0: 130, 1: 425, 2: 733 }[lane]
 
 @dataclass
 class Vector:
@@ -70,7 +90,7 @@ class Information:
     distance: int
 
     @staticmethod
-    def from_dict(d: dict) -> State:
+    def from_dict(d: dict) -> Information:
         return Information(
             elapsed_time_ms = d["elapsed_time_ms"],
             velocity        = Vector(**{k: float(x) for k, x in d["velocity"].items()}),
@@ -81,6 +101,7 @@ class Information:
 
 @dataclass
 class State:
+    dt: float
     velocity: Vector
     position: float  # Center of car (positive is downwards), 0 is top wall
     cars: list[Car]
@@ -89,27 +110,38 @@ class State:
     def new_state(self, info: Information) -> State:
         new_state = deepcopy(self)
         dt = info.elapsed_time_ms - self.info.elapsed_time_ms
+        new_state.dt = dt
 
-        # Calculate expected y position
-        # If close to what sensors say, use their values, else use expected position
-        new_state.position += info.velocity.y * dt
-        if abs(new_state.position - info.sensors.left_side) < 10:
+        # Calculate y position
+        # There will always be at least one sensor pointing on a wall
+        est_y = self.position + info.velocity.y
+        lane = pos_to_lane(est_y)
+        # If in lane 0 or 2, either the left or right side sensors will point to a wall
+        if lane == 0:
             new_state.position = info.sensors.left_side
-        elif abs(new_state.position - (WIDTH-info.sensors.right_side)) < 10:
+        elif lane == 2:
             new_state.position = WIDTH - info.sensors.right_side
+        else:
+            # Car is in middle lane, so we can assume no None readings
+            # Allow small difference in case of floating point rounding differences
+            if abs(info.sensors.left_back-info.sensors.left_front) < 1:
+                new_state.position = max(info.sensors.left_back, info.sensors.left_front) * sqrt(0.5)
+            else:
+                new_state.position = WIDTH - max(info.sensors.right_back, info.sensors.right_front) * sqrt(0.5)
 
         # Update cars velocity
         new_state.velocity = info.velocity
 
         # Update information about other cars
         # Check in reverse order so they can be popped if they are >= 1000 away
+        # print(range(len(new_state.cars)-1, -1, -1))
         for i in range(len(new_state.cars)-1, -1, -1):
             # First update velocity relative to our car
-            car = self.cars[i]
-            car.velocity += self.velocity.x - new_state.velocity.x
+            car = new_state.cars[i]
+            car.velocity -= new_state.velocity.x - self.velocity.x
 
             # Then update estimated position
-            car.position.x += car.velocity * dt
+            car.position.x += car.velocity
 
             # If car is too far away, pop from state
             if abs(car.position.x) > SENSOR_DIST:
@@ -118,11 +150,15 @@ class State:
         # Check for new cars
         # New cars can be detected by a small difference in any non-side facing sensor
         # Car readings are discarded if facing a wall or if a car is already registered within 50 of the position
+        # breakpoint()
         for i, (old_reading, new_reading) in enumerate(zip(self.info.sensors.readings(), info.sensors.readings())):
+            # print(i, old_reading, new_reading)
+            # if i == 7 and new_reading < 600:
+            #     breakpoint()
             # Check that not side sensor and numerical readings
             if i not in {0, 4} and isinstance(old_reading, (float, int)) and isinstance(new_reading, (float, int)):
                 # Check for small change in reading
-                if 0 < abs(new_reading - old_reading) < 50:
+                if 0.0005 < abs(new_reading - old_reading) < 50:
                     # Check if seeing wall
                     wall_dist = 0
                     if i in {1, 7}:
@@ -134,6 +170,7 @@ class State:
                     else:
                         # Front or back sensor will never see walls
                         is_facing_wall = False
+
                     if not is_facing_wall:
                         # We have a car, so we calculate it's position
                         # If close to an existing car's position, remove
@@ -147,26 +184,102 @@ class State:
                         else:
                             y_reading = new_state.position
                         carlane = pos_to_lane(y_reading)
-                        if not any(pos_to_lane(car.position.y) == carlane for car in self.cars):
-                            # It is a new car, if we get to here
-                            # Calculate its x position and velocity
-                            if i in {1, 3}:
-                                x_reading = new_reading * sqrt(0.5)
-                                old_x_reading = old_reading * sqrt(0.5)
-                            elif i in {5, 7}:
-                                x_reading = -new_reading * sqrt(0.5)
-                                old_x_reading = -old_reading * sqrt(0.5)
-                            elif i == 2:
-                                x_reading = new_reading
-                                old_x_reading = old_reading
-                            elif i == 6:
-                                x_reading = -new_reading
-                                old_x_reading = -old_reading
-                            velocity = (x_reading-old_x_reading) / dt
-                            new_state.cars.append(Car(velocity, Vector(x_reading, lane_to_pos(carlane))))
+                        # It may be a new car, if we get to here
+                        # In that case, we pop the existing car
+                        old_car = None
+                        for j, car in enumerate(new_state.cars):
+                            if carlane == pos_to_lane(car.position.y):
+                                old_car = new_state.cars.pop(j)
+                                break
+                        # Calculate its x position and velocity
+                        if i in {1, 3}:
+                            x_reading = new_reading * sqrt(0.5)
+                            old_x_reading = old_reading * sqrt(0.5)
+                        elif i in {5, 7}:
+                            x_reading = -new_reading * sqrt(0.5)
+                            old_x_reading = -old_reading * sqrt(0.5)
+                        elif i == 2:
+                            x_reading = new_reading
+                            old_x_reading = old_reading
+                        elif i == 6:
+                            x_reading = -new_reading
+                            old_x_reading = -old_reading
+                        velocity = x_reading - old_x_reading
+                        if i in {1, 2, 3}:
+                            x_reading += CAR_LENGTH / 2
+                        else:
+                            x_reading -= CAR_LENGTH / 2
+
+                        new_car = Car(velocity, Vector(x_reading, lane_to_pos(carlane)))
+                        if old_car:
+                            if abs(old_car.position.x - new_car.position.x) > 150:
+                                # Definitely a new car
+                                new_state.cars.append(new_car)
+                            else:
+                                # The same car, so use the old car to prevent risking wrong speed readings
+                                new_state.cars.append(deepcopy(old_car))
+                        else:
+                            new_state.cars.append(new_car)
 
         new_state.info = info
         return new_state
 
+    @staticmethod
+    def _car_bounding_box(car_pos: Vector) -> tuple[slice, slice]:
+        """ Returns a bounding box for where a car exists in the grid representation
+        Coordinate system has origin in the top center
+        car_pos is at center of car """
+        # First, change to coordinate system that has origin in upper left corner
+        car_pos = deepcopy(car_pos)
+        car_pos.x += LENGTH / 2
+        # Then calculate bounding boxes
+        left_x   = car_pos.x - CAR_LENGTH / 2
+        right_x  = car_pos.x + CAR_LENGTH / 2
+        top_y    = car_pos.y - CAR_WIDTH / 2
+        bottom_y = car_pos.y + CAR_WIDTH / 2
+        x = slice(int(left_x // GRID_SIZE), ceil(right_x / GRID_SIZE))
+        y = slice(int(top_y // GRID_SIZE), ceil(bottom_y / GRID_SIZE))
+        return y, x
 
+    def grid_representation(self) -> tuple[torch.FloatTensor, torch.FloatTensor]:
+        """ Returns a grid representation of the state
+        Assumes no mmore than three cars at a time
+        The first element is the one-hot grid representation, which is (WIDTH x LENGTH) / GRID_SIZE x 3
+        The second are the velocities of the cars, which is a three long vector
+        If cars are not present, 0 is returned for velocity
+        Grids have value 1 if partially or wholly covered """
+        grid = torch.zeros((WIDTH // GRID_SIZE, LENGTH // GRID_SIZE, 3), dtype=torch.float32)
+        # First insert our car
+        # breakpoint()
+        grid[(*self._car_bounding_box(Vector(0, self.position)), 0)] = 1
+        # Then insert other cars
+        for i, car in enumerate(self.cars, start=1):
+            try:
+                grid[(*self._car_bounding_box(car.position), i)] = 1
+            except IndexError:
+                breakpoint()
+
+        velocities = torch.FloatTensor([self.velocity.x, self.velocity.y, *(car.velocity for car in self.cars), *(0 for _ in range(2-len(self.cars)))])
+
+        return grid, velocities
+
+    @property
+    def features(self) -> torch.FloatTensor:
+        lane_cars = [0, 0, 0]
+        lane_positions = [0, 0, 0]
+        lane_velocities = [0, 0, 0]
+        for car in self.cars:
+            lane = pos_to_lane(car.position.y)
+            lane_cars[lane] = 1
+            lane_positions[lane] = car.position.x / LENGTH
+            lane_velocities[lane] = car.velocity / LENGTH
+        return torch.FloatTensor([
+            (self.position - CAR_WIDTH / 2) / WIDTH,
+            (WIDTH - self.position - CAR_WIDTH / 2) / WIDTH,
+            self.velocity.x/LENGTH,
+            self.velocity.y/WIDTH,
+            *lane_cars,
+            *lane_positions,
+            *lane_velocities,
+        ])
 

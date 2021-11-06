@@ -6,6 +6,9 @@ output
 *.pt
 *.pkl
 autobahn-training*
+grids
+episode-*
+racing-cars/debug.*
 
 *.vscode
 **/local_*/
