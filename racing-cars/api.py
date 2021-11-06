@@ -1,8 +1,8 @@
 from __future__ import annotations
+import subprocess
 from dataclasses import dataclass
-from enum import Enum
 from functools import wraps
-from typing import Any, List
+from typing import Any
 from argparse import ArgumentParser
 import datetime
 import json
@@ -17,16 +17,18 @@ from flask_restful import Api
 from flask_cors import CORS
 from pelutils import log, DataStorage
 from pydantic import BaseModel
-import numpy as np
-
 
 import train
 
 p = ArgumentParser()
 p.add_argument("--port", type=int, default=6971)
+p.add_argument("--no-train", action="store_true")
+p.add_argument("--selenium", action="store_true")
+p.add_argument("--seed", type=int, default=0)
+a = p.parse_args()
 
-PORT = p.parse_args().port
-TRAIN = True
+PORT = a.port
+TRAIN = not a.no_train
 
 start_time = time.time()
 app = Flask(__name__)
@@ -42,6 +44,10 @@ num_episodes = 0
 episode_actions = list()
 episode_states = list()
 
+if a.selenium:
+    cmd = " ".join(("python3", "web_driver.py", str(PORT), str(a.seed)))
+    proc = subprocess.Popen([cmd], shell=True,
+             stdin=None, stdout=None, stderr=None, close_fds=True)
 
 @dataclass
 class Data(DataStorage):
