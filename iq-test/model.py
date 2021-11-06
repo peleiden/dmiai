@@ -122,7 +122,7 @@ class ConsistentTransformations(IQModel):
                 if any(c > self.consistency_threshold for c in choice_consistensies):
                     print(name)
                     return np.argmax(choice_consistensies)
-        return np.random.randint(4)
+        return None
 
 if __name__ == "__main__":
     from data import divide_rule_img

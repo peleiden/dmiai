@@ -19,8 +19,8 @@ from PIL import Image
 from model import ConsistentTransformations
 
 start_time = time.time()
-#model = HighestSimilarity()
 model = ConsistentTransformations()
+model2 = HighestSimilarity()
 
 app = Flask(__name__)
 Api(app)
@@ -73,6 +73,9 @@ def predict():
     rule_img, choice_imgs = _get_data()
 
     idx = model.predict(rule_img, choice_imgs)
+    if idx is None:
+        idx = model2.predict(rule_img, choice_imgs)
+
     log(f"Predicted {idx}")
 
     return PredictResponse(next_image_index=idx)
