@@ -141,7 +141,7 @@ def predict_train():
 
 if __name__ == "__main__":
     log.configure(
-        "racing-cars.log",
+        f"racing-cars{PORT}.log",
         "Racing cars API",
         log_commit=True,
         append=False,
