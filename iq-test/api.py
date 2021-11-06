@@ -16,10 +16,11 @@ from pydantic import BaseModel
 from PIL import Image
 
 
-from model import HighestSimilarity
+from model import ConsistentTransformations
 
 start_time = time.time()
-model = HighestSimilarity()
+#model = HighestSimilarity()
+model = ConsistentTransformations()
 
 app = Flask(__name__)
 Api(app)

@@ -1,6 +1,8 @@
 from __future__ import annotations
 from abc import ABC, abstractmethod
 from itertools import chain
+from typing import Callable
+from functools import partial
 
 import numpy as np
 import pandas as pd
@@ -8,7 +10,6 @@ from skimage.color.colorconv import rgb2hsv
 
 from data import divide_rule_img
 from imgutils import first_order_diff, image_preprocess, diff, similarity
-
 
 class IQModel(ABC):
     def receive(self, rule_img: np.ndarray, choice_imgs: list[np.ndarray]) -> tuple[list[list[np.ndarray]], list[np.ndarray], list[np.ndarray]]:
@@ -75,6 +76,51 @@ class HighestSimilarity(IQModel):
         mean_mses = options.groupby("choice").mean()
         return mean_mses.mse.argmin()
 
+class ConsistentTransformations(IQModel):
+    def __init__(self):
+        self.consistency_threshold = 0.9
+        self.angles = np.arange(1, 8) * 45
+        self.transformation_library = dict()
+        for a in self.angles:
+            self.transformation_library[f"rot{a}"] = partial(self.rotation, a)
+
+    def rotation(self, angle:float, img: np.ndarray) -> np.ndarray:
+        return (np.array(
+            Image.fromarray(
+                (255*img).astype(np.uint8)
+            ).rotate(angle, expand=True)
+        )/255).astype(np.float64)
+
+    def pad_for_similarity(self, img1: np.ndarray, img2: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        d = img1.shape[0] - img2.shape[0]
+        if d:
+            margins = np.array([(int(np.ceil(d / 2)), int(np.floor(d / 2)))]*2+[(0,0)])
+            if d < 0:
+                img1 = np.pad(img1, pad_width=margins)
+            else:
+                img2 = np.pad(img2, pad_width=margins)
+        return img1, img2
+
+    def consistency(self, imgs: np.ndarray, transform: Callable) -> float:
+        sims = list()
+        for i, img in enumerate(imgs[:-1]):
+            sims.append(similarity(
+                *self.pad_for_similarity(
+                    transform(img), imgs[i+1]
+                )
+            ))
+        return np.mean(sims)
+
+    def predict(self, rule_img: np.ndarray, choice_imgs: list[np.ndarray]) -> int:
+        examples, test_imgs, choice_imgs = self.receive(rule_img, choice_imgs)
+        for name, fun in self.transformation_library.items():
+            example_consistensies = [self.consistency(example, fun) for example in examples]
+            if sum(c > self.consistency_threshold for c in example_consistensies) > 2:
+                choice_consistensies = [self.consistency([*test_imgs, c], fun) for c in choice_imgs]
+                if any(c > self.consistency_threshold for c in choice_consistensies):
+                    return np.argmax(choice_consistensies)
+        return np.randint(4)
+
 if __name__ == "__main__":
     from PIL import Image
     from data import divide_rule_img
@@ -82,4 +128,5 @@ if __name__ == "__main__":
     img = np.array(Image.open("data/test18.jpeg"))
     choice_imgs = [np.array(Image.open(f"data/choices18-{i}.jpeg")) for i in range(4)]
     #print(UniformDifferences().predict(img, choice_imgs))
-    print(HighestSimilarity().predict(img, choice_imgs))
+    #print(HighestSimilarity().predict(img, choice_imgs))
+    print(ConsistentTransformations().predict(img, choice_imgs))
