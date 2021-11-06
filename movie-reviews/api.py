@@ -17,12 +17,14 @@ import torch
 from train import ScorePredictor, coerce_scores, Review, Example, Batch
 
 model_name = "roberta-base"
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 bert_config = AutoConfig.from_pretrained(model_name)
 tokenizer = AutoTokenizer.from_pretrained(model_name)
 model = RobertaModel.from_pretrained(model_name)
-model = ScorePredictor(model, bert_config, tokenizer.model_max_length)
+model = ScorePredictor(model, bert_config)
 sd = torch.load("movie-reviews/%s.pt" % model_name, map_location=torch.device("cpu"))
 model.load_state_dict(sd)
+model = model.to(device)
 model.eval()
 
 start_time = time.time()
@@ -70,21 +72,15 @@ def api():
 def predict():
     data = _get_data()
     review_strings = data["reviews"]
-    log("Received %i reviews" % len(review_strings))
+    log.debug("Received %i reviews" % len(review_strings))
 
     # Score does not matter here, it just has to be parsable for code to work
     reviews = [Review(s, "5/5") for s in review_strings]
     examples = [Example.from_review(tokenizer, review) for review in reviews]
-    # Sort by number of tokens
-    sort_ids = np.argsort([ex.num_tokens for ex in examples])
-    examples = [examples[i] for i in sort_ids]
-    num_tokens = np.array([ex.num_tokens for ex in examples])
-    log.debug(
-        "Number of reviews: %i" % len(examples),
-        "Mean number of tokens: %.2f" % num_tokens.mean(),
-        "Number of reviews with more than %i tokens: %i" % (tokenizer.model_max_length, (num_tokens>tokenizer.model_max_length).sum()),
-    )
-    batch_size = 8
+    log.debug("Number of reviews: %i" % len(examples))
+
+    # Build batches
+    batch_size = 100
     num_batches = len(examples) // batch_size
     batches = list()
     for i in range(num_batches):
@@ -93,16 +89,18 @@ def predict():
         batches.append(Batch.from_examples(examples[-remaining_examples:]))
         num_batches += 1
     assert num_batches == len(batches)
+
+    # Predict number of stars
     preds = torch.empty(len(examples), dtype=float)
-    with torch.no_grad():
+    with torch.no_grad(), torch.cuda.amp.autocast_mode.autocast():
         c = 0
         for i, batch in enumerate(batches):
-            log.debug("Processing batch %i / %i which has size %i" % (i, num_batches-1, len(batch)))
-            preds[c:c+len(batch)] = model(batch, tokenizer.pad_token_id, torch.device("cpu"))
+            log.debug("Processing batch %i / %i, which has size %i" % (i, num_batches-1, len(batch)))
+            preds[c:c+len(batch)] = model(batch.to(device))
             c += len(batch)
+        log.debug("Done predicting scores")
         assert c == len(examples)
-    # Reverse sorts
-    preds = preds[np.argsort(sort_ids)]
+
     return PredictResponse(ratings=coerce_scores(preds).tolist())
 
 if __name__ == "__main__":

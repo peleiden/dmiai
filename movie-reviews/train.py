@@ -16,7 +16,7 @@ import torch.nn as nn
 
 
 # Set to None to use max length
-NUM_TOKENS = 380
+NUM_TOKENS = 250
 update_rc_params(rc_params_small)
 
 @dataclass
@@ -47,11 +47,13 @@ class Batch:
     ids: torch.IntTensor  # batch size x num ids
     targets: torch.LongTensor  # batch size
 
-    class_stars = np.linspace([-0.5, 0.5, 12])[1:-1]
+    midpoints = np.linspace(-0.5, 0.5, 11)
+    midpoints = (midpoints[:-1]+midpoints[1:]) / 2
+    stars = np.linspace(0.5, 5, 10)
 
     @classmethod
     def from_examples(cls, examples: list[Example]) -> Batch:
-        targets = torch.argmin(torch.vstack([torch.Tensor([ex.target for ex in examples])]*10).T-cls.class_stars, dim=1).long()
+        targets = torch.argmin(torch.abs(torch.vstack([torch.Tensor([ex.target for ex in examples])]*10).T-cls.midpoints), dim=1).long()
         return Batch(
             torch.stack([ex.ids for ex in examples]),
             targets,
@@ -80,7 +82,7 @@ class ScorePredictor(nn.Module):
     def __init__(self, pretrained_model: nn.Module, bert_config: AutoConfig):
         super().__init__()
         self.pretrained_model = pretrained_model
-        self.classifier = nn.Linear(bert_config.hidden_size*NUM_TOKENS, 10)
+        self.classifier = nn.Linear(bert_config.hidden_size*NUM_TOKENS, len(Batch.stars))
 
     def forward(self, batch: Batch) -> torch.FloatTensor:
         cwrs = self.pretrained_model(batch.ids, return_dict=True)["last_hidden_state"]
@@ -143,13 +145,11 @@ def evaluate(model, tokenizer, num_test_batches: int, test_batches: list[Batch],
             batch = batch.to(device)
             out = model(batch)
             losses[j] = criterion(out, batch.targets).item()
-            pred_stars = coerce_scores(torch.from_numpy(Batch.class_stars[torch.argmax(out, dim=1)])).numpy()
-            accuracies[j] = nn.L1Loss()(pred_stars, coerce_scores(batch.targets)).item()
+            pred_stars = Batch.stars[torch.argmax(out, dim=1).cpu().numpy()]
+            accuracies[j] = np.abs(pred_stars-Batch.stars[batch.targets.cpu().numpy()]).mean()
             if plot_preds:
-                plt.subplot(121)
-                plt.scatter(batch.targets.cpu().numpy(), pred_stars, c=tab_colours[0])
-                plt.subplot(122)
-                plt.scatter(coerce_scores(batch.targets).cpu().numpy(), pred_stars, c=tab_colours[0])
+                plt.figure(figsize=figsize_std)
+                plt.scatter(Batch.stars[batch.targets.cpu().numpy()], pred_stars, c=tab_colours[0])
         res.test_losses[i+1] = losses.mean()
         res.accuracies[i+1] = accuracies.mean()
         log("Mean test loss: %.4f" % res.test_losses[i+1], "Mean accuracy %.4f" % res.accuracies[i+1])
@@ -174,6 +174,13 @@ def run(location: str, model_name: str, batch_size: int, epochs: int, lr: float,
         print_level=Levels.DEBUG,
         log_commit=True,
     )
+    log("Location:          %s" % location,
+        "Model:             %s" % model_name,
+        "Batch size:        %i" % batch_size,
+        "Epochs:            %i" % epochs,
+        "Learning rate:     %s" % lr,
+        "Max examples:      %s" % max_examples,
+        "Number of  tokens: %i" % NUM_TOKENS)
     def savefig(name: str):
         plt.tight_layout()
         plt.savefig(os.path.join(location, name + ".png"))
