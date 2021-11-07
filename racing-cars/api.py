@@ -147,15 +147,11 @@ def predict_train():
         action = s.ActionType.ACCELERATE
         action_queue = deque([])
         init = False
-    elif action_queue:  # And check that action queue should not be updated
-        state = state.new_state(info)
-        action = action_queue.popleft()
     else:
         state = state.new_state(info)
-        action_queue.extend(predict(state))
-        action = action_queue.popleft()
-    
-    time.sleep(1)
+        action = predict(state)
+
+    # time.sleep(1)
 
     dat.dt.append(state.dt)
     dat.position.append(state.position)

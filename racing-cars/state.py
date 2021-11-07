@@ -123,12 +123,11 @@ class State:
         dt = info.elapsed_time_ms - self.info.elapsed_time_ms
         new_state.dt = dt
 
-        # Calculate y position
-        # There will always be at least one sensor pointing on a wall
-        new_state.position = self.position + info.velocity.y
-        lane = pos_to_lane(new_state.position)
         # Update cars velocity
         new_state.velocity = info.velocity
+        # Calculate y position
+        # There will always be at least one sensor pointing on a wall
+        new_state.position += info.velocity.y
 
         # Update information about other cars
         # Check in reverse order so they can be popped if they are >= 1000 away
