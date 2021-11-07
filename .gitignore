@@ -9,6 +9,7 @@ autobahn-training*
 grids
 episode-*
 racing-cars/debug.*
+iq-test/ims
 
 *.vscode
 **/local_*/

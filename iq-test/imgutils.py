@@ -1,7 +1,7 @@
 from __future__ import annotations
 import numpy as np
 from skimage.metrics import structural_similarity
-from skimage.filters import gaussian
+from skimage.filters import gaussian, unsharp_mask
 import cv2
 
 def similarity(img1: np.ndarray, img2: np.ndarray) -> float:
@@ -19,7 +19,7 @@ def first_order_diff(seq: tuple[np.ndarray, np.ndarray, np.ndarray]) -> tuple[np
     return diff(seq[0], seq[1]), diff(seq[1], seq[2])
 
 def image_preprocess(img: np.ndarray) -> np.ndarray:
-    img = gaussian(img, sigma=1, multichannel=True)
+    img = unsharp_mask(gaussian(img, sigma=1, multichannel=True), multichannel=True)
     return img
 
 if __name__ == "__main__":
