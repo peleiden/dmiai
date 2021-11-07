@@ -73,25 +73,29 @@ state = None
 @app.route("/api/predict", methods=["POST"])
 @api_fun
 def predict():
-    global state
-    data = _get_data()
+    try:
+        global state
+        data = _get_data()
 
-    info = s.Information.from_dict(data)
-    if info.distance and state is None:
-        log("Health check!")
+        info = s.Information.from_dict(data)
+        if info.distance and state is None:
+            log("Health check!")
+            action = s.ActionType.NOTHING
+        elif info.distance and state is not None:
+            print()
+            state = state.new_state(info)
+            action = model.predict(state)
+            print(action, state.position, state.velocity)
+        else:
+            state = s.State(0, s.Vector(0., 0.), 425, list(), info)
+            action = s.ActionType.ACCELERATE
+
+        if info.did_crash:
+            log("Crashed, get better", state.info.distance)
+            state = None
+    except BaseException as e:
+        print("ERROR ERROR ERROR :(:( ")
         action = s.ActionType.NOTHING
-    elif info.distance and state is not None:
-        #print()
-        state = state.new_state(info)
-        action = model.predict(state)
-        #print(action, state.position, state.velocity)
-    else:
-        state = s.State(0, s.Vector(0., 0.), 425, list(), info)
-        action = s.ActionType.ACCELERATE
-
-    if info.did_crash:
-        log("Crashed, get better", state.info.distance)
-        state = None
 
     return PredictResponse(action=action)
 
