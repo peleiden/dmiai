@@ -75,7 +75,7 @@ def predict(state: s.State) -> s.ActionType:
     if t_lane != state.lane or\
         abs(state.velocity.y) > 0.001 or\
         abs(state.position - s.lane_to_pos(t_lane)) > margin:
-        return to_target_position(state, s.lane_to_pos(t_lane, driver=True))
+        return to_target_position(state, s.lane_to_pos(t_lane))
 
     # If our lane is clear, YEET
     return s.ActionType.ACCELERATE

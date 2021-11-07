@@ -5,24 +5,8 @@ from enum import Enum
 from math import ceil, sqrt
 from typing import Literal
 
-from pelutils import DataStorage
-import numpy as np
 import torch
 
-
-@dataclass
-class Data(DataStorage):
-    dt: list[float]
-    position: list[float]
-    velocity_x: list[float]
-    velocity_y: list[float]
-    car1pos_x: list[float]
-    car1lane: list[float]
-    car2pos_x: list[float]
-    car2lane: list[float]
-    car1vel: list[float]
-    car2vel: list[float]
-    infos: list
 
 def to_dict(obj) -> dict:
     if hasattr(obj, "__dict__"):
@@ -56,9 +40,7 @@ def pos_to_lane(y: float) -> Literal[0, 1, 2]:
         return 1
     return 2
 
-def lane_to_pos(lane: Literal[0, 1, 2], driver=False) -> float:
-    # if driver:
-    #     return { 0: 130+CAR_WIDTH/2-10, 1: 425, 2: 713-CAR_WIDTH/2+15 }[lane]
+def lane_to_pos(lane: Literal[0, 1, 2]) -> float:
     return { 0: 130, 1: 425, 2: 733 }[lane]
 
 @dataclass
@@ -147,11 +129,7 @@ class State:
         # Check for new cars
         # New cars can be detected by a small difference in any non-side facing sensor
         # Car readings are discarded if facing a wall or if a car is already registered within 50 of the position
-        # breakpoint()
         for i, (old_reading, new_reading) in enumerate(zip(self.info.sensors.readings(), info.sensors.readings())):
-            # print(i, old_reading, new_reading)
-            # if i == 7 and new_reading < 600:
-            #     breakpoint()
             # Check that not side sensor and numerical readings
             if i not in {0, 4} and isinstance(old_reading, (float, int)) and isinstance(new_reading, (float, int)):
                 # Check for small change in reading
