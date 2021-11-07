@@ -142,12 +142,26 @@ class State:
                     elif i in {3, 5}:
                         wall_dist = (WIDTH - new_state.position) * sqrt(2)
                     if wall_dist != 0:
-                        is_facing_wall = abs(wall_dist-new_reading) < 20
+                        is_facing_wall = abs(wall_dist-new_reading) < 10
                     else:
-                        # Front or back sensor will never see walls
+                        # Front or back sensor will never see walls or side of cars
                         is_facing_wall = False
 
-                    if not is_facing_wall:
+                    # Check if seeing the side of a car
+                    if i in {1, 7}:
+                        dist_to_l0side = new_state.position - (lane_to_pos(0)+CAR_WIDTH/2)
+                        dist_to_l1side = new_state.position - (lane_to_pos(1)+CAR_WIDTH/2)
+                        y_dist = sqrt(0.5) * new_reading
+                        is_facing_carside = abs(dist_to_l0side-y_dist) < 5 or abs(dist_to_l1side-y_dist) < 5
+                    elif i in {3, 5}:
+                        dist_to_l1side = (lane_to_pos(1)-CAR_WIDTH/2) - new_state.position
+                        dist_to_l2side = (lane_to_pos(2)-CAR_WIDTH/2) - new_state.position
+                        y_dist = sqrt(0.5) * new_reading
+                        is_facing_carside = abs(dist_to_l1side-y_dist) < 5 or abs(dist_to_l2side-y_dist) < 5
+                    else:
+                        is_facing_carside = False
+
+                    if not is_facing_wall and not is_facing_carside:
                         # We have a car, so we calculate it's position
                         # If close to an existing car's position, remove
                         # Else add to car list
