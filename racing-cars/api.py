@@ -52,7 +52,7 @@ def api_fun(func):
     @wraps(func)
     def wrapper(*args, **kwargs):
         with log.log_errors:
-            #log("Received call to %s" % func.__name__)
+            log("Received call to %s" % func.__name__)
             res = func(*args, **kwargs)
             if isinstance(res, PredictResponse):
                 return jsonify(json.loads(res.json()))
