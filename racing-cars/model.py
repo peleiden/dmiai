@@ -39,7 +39,7 @@ def to_target_position(state: s.State, target_position: float) -> s.ActionType:
 # DONE Skift bane, så snart front-sensor bliver ikke-None
 # DONE Hvis yderst, og både samme bane og midterst er optaget, så tænk dig om
 # DONE Første state skal beregnes, hvis der ikke er kørt noget
-# Lad være at køre for hurtigt, se seed 3
+# Lad være at køre for hurtigt, se seed 5, 7, 8, 9
 # Tilføj try/except
 # (Niceness) Hvis tid nok, så skiftevis accelerer frem og til siden ved vognbaneskift
 
@@ -85,21 +85,24 @@ def find_clear_lanes(state: s.State) -> list[int]:
             non_clear.add(lane)
         else:
             diff = lane-state.lane
-            if diff == 1 and not s.wall_consistent(state, "right"):
+            if diff == 1 and not s.wall_consistent(state, "right") and not any(c.lane > state.lane for c in state.cars):
                 non_clear.add(lane)
-            if diff == -1 and not s.wall_consistent(state, "left"):
+            if diff == -1 and not s.wall_consistent(state, "left") and not any(c.lane < state.lane for c in state.cars):
                 non_clear.add(lane)
 
     return list(set(range(3))-non_clear)
 
+def get_dodge_time(state: s.State, target: float, ):
+    pass
+
 def predict(state: s.State) -> s.ActionType:
     # First determine what lanes are clear
     # A lane is considered clear if the car can move there without having a car in front
-    print(state.cars)
     clear_lanes = find_clear_lanes(state)
 
     t_lane = target_lane(state, clear_lanes)
-    print("CLEAR", clear_lanes, "TARGET", t_lane, "CURRENT", state.lane)
+    #print(state.cars)
+    #print("CLEAR", clear_lanes, "TARGET", t_lane, "CURRENT", state.lane)
 
     # If we are in an outer lane and need to get to the other outer lane
     if state.lane != 1 and\
@@ -110,7 +113,7 @@ def predict(state: s.State) -> s.ActionType:
         car_to_side = car_to_side[0]
         # Cars might be too far away
         if car_in_front.lane not in clear_lanes and car_to_side.lane not in clear_lanes:
-            print("Difficult!")
+            #print("Difficult!")
             dodge_target = s.lane_to_pos(t_lane)
             if state.lane == 0:
                 dodge_target -= s.CAR_WIDTH/2 + 10
@@ -134,9 +137,13 @@ def predict(state: s.State) -> s.ActionType:
                     return s.ActionType.DECELERATE
 
     # If our lane is not clear, we have to change
-    if t_lane != state.lane or\
-        abs(state.velocity.y) > 0.001 or\
-        abs(state.position - s.lane_to_pos(t_lane)) > MARGIN:
+    if t_lane != state.lane or abs(state.velocity.y) > 0.001 or abs(state.position - s.lane_to_pos(t_lane)) > MARGIN:
+        #Special case: If we only know the location of one car, another one might be hiding: Be careful and brake if it is safe!
+        if len(state.cars) == 1 and t_lane != state.lane or not state.cars and state.info.sensors.front is not None:
+            # Must be far enough away before safe to brake
+            if state.velocity.y == 0 and (not state.cars or state.cars[0].velocity < -5):
+            #    print("Careful!")
+                return s.ActionType.DECELERATE
         return to_target_position(state, s.lane_to_pos(t_lane))
 
     # If our lane is clear, YEET

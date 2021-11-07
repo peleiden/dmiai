@@ -107,6 +107,7 @@ class State:
 
         # Update cars velocity
         new_state.velocity = info.velocity
+        acc_x = new_state.velocity.x - self.velocity.x
         # Calculate y position
         # There will always be at least one sensor pointing on a wall
         new_state.position += info.velocity.y
@@ -179,7 +180,8 @@ class State:
                         elif i == 6:
                             x_reading = -new_reading
                             old_x_reading = -old_reading
-                        velocity = x_reading - old_x_reading
+                        velocity = x_reading - old_x_reading - acc_x
+
                         if i in {1, 2, 3}:
                             x_reading += CAR_LENGTH / 2
                         else:

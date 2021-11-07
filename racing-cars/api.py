@@ -81,9 +81,10 @@ def predict():
         log("Health check!")
         action = s.ActionType.NOTHING
     elif info.distance and state is not None:
+        #print()
         state = state.new_state(info)
         action = model.predict(state)
-        print(action, state.position, state.velocity)
+        #print(action, state.position, state.velocity)
     else:
         state = s.State(0, s.Vector(0., 0.), 425, list(), info)
         action = s.ActionType.ACCELERATE
