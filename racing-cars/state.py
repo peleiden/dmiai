@@ -195,7 +195,6 @@ class State:
                                 new_state.cars.append(deepcopy(old_car))
                         else:
                             new_state.cars.append(new_car)
-
         new_state.info = info
         return new_state
 
@@ -241,3 +240,14 @@ class State:
     @property
     def lane(self):
         return pos_to_lane(self.position)
+
+def wall_consistent(state: State, sensor_side: str) -> bool:
+    margin = 10
+    side = getattr(state.info.sensors, sensor_side + "_side")
+    if side is None:
+        return True
+    exp = side * sqrt(2)
+    back, front = getattr(state.info.sensors, sensor_side + "_back"), getattr(state.info.sensors, sensor_side + "_front")
+    if back is None or front is None:
+        return True
+    return (exp - margin < back < exp + margin) and (exp - margin < front < exp + margin)

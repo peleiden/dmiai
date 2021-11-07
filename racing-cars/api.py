@@ -15,7 +15,7 @@ from flask_cors import CORS
 from pelutils import log
 from pydantic import BaseModel
 
-from model import predict
+import model
 import state as s
 
 
@@ -52,7 +52,7 @@ def api_fun(func):
     @wraps(func)
     def wrapper(*args, **kwargs):
         with log.log_errors:
-            log("Received call to %s" % func.__name__)
+            #log("Received call to %s" % func.__name__)
             res = func(*args, **kwargs)
             if isinstance(res, PredictResponse):
                 return jsonify(json.loads(res.json()))
@@ -68,25 +68,29 @@ def api():
         "service": "racing-cars",
     }
 
+state = None
+
 @app.route("/api/predict", methods=["POST"])
 @api_fun
 def predict():
-    global state, init
+    global state
     data = _get_data()
 
     info = s.Information.from_dict(data)
-
-    if init:
+    if info.distance and state is None:
+        log("Health check!")
+        action = s.ActionType.NOTHING
+    elif info.distance and state is not None:
+        state = state.new_state(info)
+        action = model.predict(state)
+        print(action, state.position, state.velocity)
+    else:
         state = s.State(0, s.Vector(0., 0.), 425, list(), info)
         action = s.ActionType.ACCELERATE
-        init = False
-    else:
-        state = state.new_state(info)
-        action = predict(state)
 
     if info.did_crash:
         log("Crashed, get better", state.info.distance)
-        init = True
+        state = None
 
     return PredictResponse(action=action)
 
