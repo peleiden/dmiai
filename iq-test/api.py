@@ -80,11 +80,13 @@ def predict():
         case = p.Case(*divide_rule_img(rule_img))
         for i in range(4):
             choice_imgs[i] = image_preprocess(choice_imgs[i].astype(float)/255)
+        import matplotlib.pyplot as plt
         idx = p.predict(case, choice_imgs)
 
         log(f"Predicted {idx}")
-    except:
+    except Exception as e:
         # Guess something just in case something goes wrong
+        log.error("Caught exception. Returning 0", e)
         idx = 0
 
     return PredictResponse(next_image_index=idx)
