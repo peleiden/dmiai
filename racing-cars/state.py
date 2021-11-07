@@ -34,14 +34,14 @@ ALL_ACTIONS = tuple(a for a in ActionType)
 ACTIONS = len(ALL_ACTIONS)
 
 def pos_to_lane(y: float) -> Literal[0, 1, 2]:
-    if y <= 280:
+    if y <= 275.5:
         return 0
-    if y <= 582:
+    if y <= 574.5:
         return 1
     return 2
 
 def lane_to_pos(lane: Literal[0, 1, 2]) -> float:
-    return { 0: 130, 1: 425, 2: 733 }[lane]
+    return { 0: 126, 1: 425, 2: 724 }[lane]
 
 @dataclass
 class Feature:
