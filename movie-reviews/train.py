@@ -15,8 +15,8 @@ import torch
 import torch.nn as nn
 
 
-# Set to None to use max length
-NUM_TOKENS = 250
+# Number of tokens to use. Includes cls and sep
+NUM_TOKENS = 380
 update_rc_params(rc_params_small)
 
 @dataclass
@@ -45,7 +45,7 @@ class Example:
 @dataclass
 class Batch:
     ids: torch.IntTensor  # batch size x num ids
-    targets: torch.LongTensor  # batch size
+    targets: torch.FloatTensor  # batch size
 
     midpoints = np.linspace(-0.5, 0.5, 11)
     midpoints = (midpoints[:-1]+midpoints[1:]) / 2
@@ -53,10 +53,9 @@ class Batch:
 
     @classmethod
     def from_examples(cls, examples: list[Example]) -> Batch:
-        targets = torch.argmin(torch.abs(torch.vstack([torch.Tensor([ex.target for ex in examples])]*10).T-cls.midpoints), dim=1).long()
         return Batch(
             torch.stack([ex.ids for ex in examples]),
-            targets,
+            torch.FloatTensor([ex.target for ex in examples]),
         )
 
     def to(self, device: torch.device) -> Batch:
@@ -75,28 +74,30 @@ class Results(DataStorage):
 
     train_losses: np.ndarray
     test_losses: np.ndarray
-    accuracies: np.ndarray
+    errors: np.ndarray
 
 class ScorePredictor(nn.Module):
 
     def __init__(self, pretrained_model: nn.Module, bert_config: AutoConfig):
         super().__init__()
         self.pretrained_model = pretrained_model
-        self.classifier = nn.Linear(bert_config.hidden_size*NUM_TOKENS, len(Batch.stars))
+        self.regressor = nn.Linear(bert_config.hidden_size*NUM_TOKENS, 1)
 
     def forward(self, batch: Batch) -> torch.FloatTensor:
         cwrs = self.pretrained_model(batch.ids, return_dict=True)["last_hidden_state"]
         cwrs = cwrs.view(len(batch), -1).contiguous()
-        return self.classifier(cwrs).squeeze()
+        return self.regressor(cwrs).squeeze()
 
 def parse_score(review: Review) -> float:
     """ Parses a review score. Returns -1 if unparsable """
-    if review.score.endswith("/5"):
+    try:
         nom, denom = review.score.split("/")
         if denom not in ("0", "00"):
             score = float(nom) / float(denom)
             if 0 <= score <= 1:
                 return score - 0.5
+    except:
+        return -1
     return -1
 
 def coerce_scores(scores: torch.FloatTensor) -> torch.FloatTensor:
@@ -140,19 +141,20 @@ def evaluate(model, tokenizer, num_test_batches: int, test_batches: list[Batch],
     with torch.no_grad():
         model.eval()
         losses = np.zeros(num_test_batches)
-        accuracies = np.zeros(num_test_batches)
+        errors = np.zeros(num_test_batches)
         for j, batch in tqdm(enumerate(test_batches), total=num_test_batches):
             batch = batch.to(device)
             out = model(batch)
             losses[j] = criterion(out, batch.targets).item()
-            pred_stars = Batch.stars[torch.argmax(out, dim=1).cpu().numpy()]
-            accuracies[j] = np.abs(pred_stars-Batch.stars[batch.targets.cpu().numpy()]).mean()
+            errors[j] = nn.L1Loss()(coerce_scores(out), coerce_scores(batch.targets)).item()
             if plot_preds:
-                plt.figure(figsize=figsize_std)
-                plt.scatter(Batch.stars[batch.targets.cpu().numpy()], pred_stars, c=tab_colours[0])
+                plt.subplot(121)
+                plt.scatter(batch.targets.cpu().numpy(), out.cpu().numpy(), c=tab_colours[0])
+                plt.subplot(122)
+                plt.scatter(coerce_scores(batch.targets).cpu().numpy(), coerce_scores(out).cpu().numpy(), c=tab_colours[0])
         res.test_losses[i+1] = losses.mean()
-        res.accuracies[i+1] = accuracies.mean()
-        log("Mean test loss: %.4f" % res.test_losses[i+1], "Mean accuracy %.4f" % res.accuracies[i+1])
+        res.errors[i+1] = errors.mean()
+        log("Mean test loss: %.4f" % res.test_losses[i+1], "Mean error %.4f" % res.errors[i+1])
         model.train()
     if plot_preds:
         plt.tight_layout()
@@ -220,7 +222,7 @@ def run(location: str, model_name: str, batch_size: int, epochs: int, lr: float,
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
     num_updates = num_train_batches * epochs
     scheduler = get_linear_schedule_with_warmup(optimizer, int(0.06*num_updates), num_updates)
-    criterion = nn.CrossEntropyLoss()
+    criterion = nn.L1Loss()
 
     log.section("Training for %i epochs for a total of %i updates" % (epochs, num_updates))
     res = Results(
@@ -228,7 +230,7 @@ def run(location: str, model_name: str, batch_size: int, epochs: int, lr: float,
         num_batches = num_train_batches,
         train_losses = np.zeros(num_updates),
         test_losses = np.zeros(epochs+1),
-        accuracies = np.zeros(epochs+1)
+        errors = np.zeros(epochs+1)
     )
     evaluate(model, tokenizer, num_test_batches, test_batches, device, criterion, res, -1)
     for i in range(epochs):

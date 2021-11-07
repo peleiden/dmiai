@@ -11,7 +11,6 @@ from flask_cors import CORS
 from pelutils import log
 from pydantic import BaseModel
 from transformers import AutoTokenizer, RobertaModel, AutoConfig
-import numpy as np
 import torch
 
 from train import ScorePredictor, coerce_scores, Review, Example, Batch
@@ -77,7 +76,6 @@ def predict():
     # Score does not matter here, it just has to be parsable for code to work
     reviews = [Review(s, "5/5") for s in review_strings]
     examples = [Example.from_review(tokenizer, review) for review in reviews]
-    log.debug("Number of reviews: %i" % len(examples))
 
     # Build batches
     batch_size = 100

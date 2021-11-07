@@ -22,7 +22,7 @@ def loss_and_acc(res: Results):
     epochs = np.arange(1+res.epochs) * res.num_batches
     plt.plot(pus, res.train_losses, label="Train loss")
     plt.scatter(epochs, res.test_losses, label="Test loss", edgecolors="black")
-    plt.scatter(epochs, res.accuracies, label="Accuracy", edgecolors="black")
+    plt.scatter(epochs, res.errors, label="Accuracy", edgecolors="black")
     plt.legend(loc=1)
     plt.grid()
 
