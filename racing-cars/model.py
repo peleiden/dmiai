@@ -44,8 +44,10 @@ def to_target_position(state: s.State, target_position: float) -> s.ActionType:
 # (Niceness) Hvis tid nok, så skiftevis accelerer frem og til siden ved vognbaneskift
 
 # Problematisk seed
-# 1944
-# 99
+# 420
+# 2021
+# 1337
+# 1010
 
 def target_lane(state: s.State, clear_lanes: list[int]) -> int:
     if 1 in clear_lanes:
@@ -122,16 +124,12 @@ def predict(state: s.State) -> s.ActionType:
                 dodge_target += s.CAR_WIDTH/2 + 10
             dy = dodge_target - state.position
             ay = 1 if dodge_target > state.position else -1
-            time_to_dodge = (sqrt(8*ay*dy+state.velocity.y**2)-state.velocity.y)/(2*ay)
-            # If we cannot dodge with current speed, slow down
-            print(f"difficult-stats {car_in_front.position} {car_in_front.velocity}")
-            if abs(state.velocity.y) == 0 and time_to_dodge < (car_in_front.position - s.CAR_LENGTH-50)/state.velocity.x:
-                return s.ActionType.DECELERATE
+            time_to_dodge = abs((sqrt(8*ay*dy+state.velocity.y**2)-state.velocity.y)/(2*ay))
             # Where is the car to the side in the time it takes to dodge?
             side_future_pos = car_to_side.position + car_to_side.velocity * time_to_dodge
             front_future_pos = car_in_front.position + car_in_front.velocity * time_to_dodge
             # If its ahead of us in future, we can start turning, otherwise, stay in lane and brake
-            if side_future_pos > (s.CAR_LENGTH+100) and front_future_pos > (s.CAR_LENGTH+75):
+            if side_future_pos > (s.CAR_LENGTH+200) and (non_collide := front_future_pos > (s.CAR_LENGTH+75)):
                 print(f"Dodging because car to the side is going to be @{side_future_pos} in {time_to_dodge} seconds")
                 return s.ActionType.STEER_RIGHT if dy > 0 else s.ActionType.STEER_LEFT
             else:
